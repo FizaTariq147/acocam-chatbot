@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.example
+.DS_Store
+data/indexes/
+*.log
+.venv-ml/
+ml/data/*.jsonl
+ml/data/*.meta.json
+ml/models/
+__pycache__/

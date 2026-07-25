@@ -1,0 +1,8 @@
+{
+  "id": "list_shipments",
+  "label": "List shipments",
+  "method": "GET",
+  "path": "/api/shipments",
+  "baseUrlEnv": "ACOCAM_API_BASE_URL",
+  "requireAuth": true
+}

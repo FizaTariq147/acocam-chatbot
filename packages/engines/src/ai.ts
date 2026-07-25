@@ -1,0 +1,167 @@
+import type { KnowledgeHit, LlmMessage, LlmResult } from '@agent-platform/domain';
+
+export interface AiProvider {
+  readonly name: string;
+  complete(messages: LlmMessage[]): Promise<LlmResult>;
+}
+
+export class NullAiProvider implements AiProvider {
+  readonly name = 'null';
+
+  async complete(messages: LlmMessage[]): Promise<LlmResult> {
+    const user = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+    return {
+      ok: true,
+      content: `I can help with that based on our knowledge base. You asked: "${user.slice(0, 120)}"`,
+      provider: this.name,
+    };
+  }
+}
+
+export class OpenAiCompatibleProvider implements AiProvider {
+  readonly name: string;
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseUrl: string,
+    private readonly model: string,
+    name = 'openai-compatible',
+  ) {
+    this.name = name;
+  }
+
+  async complete(messages: LlmMessage[]): Promise<LlmResult> {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
+
+      const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature: 0.2,
+          max_tokens: 700,
+        }),
+      });
+      if (!res.ok) {
+        return { ok: false, content: '', provider: this.name, error: `HTTP ${res.status}` };
+      }
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = data.choices?.[0]?.message?.content?.trim() ?? '';
+      return { ok: Boolean(content), content, provider: this.name };
+    } catch (err) {
+      return {
+        ok: false,
+        content: '',
+        provider: this.name,
+        error: err instanceof Error ? err.message : 'LLM request failed',
+      };
+    }
+  }
+}
+
+function formatHitAnswer(hit: KnowledgeHit): string {
+  const text = hit.content.trim();
+  const qa = text.match(/^Q:\s*[\s\S]+?\n\nA:\s*([\s\S]+)$/i);
+  if (qa?.[1]) return qa[1].trim();
+  return text.replace(/^#+\s.*\n/, '').trim();
+}
+
+export class AiEngine {
+  constructor(private provider: AiProvider) {}
+
+  setProvider(provider: AiProvider): void {
+    this.provider = provider;
+  }
+
+  async answerFromKnowledge(hits: KnowledgeHit[], userMessage: string, llmMessages?: LlmMessage[]): Promise<{
+    message: string;
+    source: string;
+    confidence: number;
+    citations: Array<{ id: string; title: string; score: number }>;
+  }> {
+    if (!hits.length) {
+      return {
+        message:
+          "I don't have enough information in the knowledge base to answer that confidently. Would you like me to connect you with a human agent?",
+        source: 'fallback',
+        confidence: 0.2,
+        citations: [],
+      };
+    }
+
+    const top = hits[0]!;
+    const citations = hits.slice(0, 3).map((h) => ({ id: h.id, title: h.heading || h.title, score: h.score }));
+
+    const useLocalModel =
+      this.provider.name === 'local-finetuned' ||
+      this.provider.name === 'openai-compatible';
+
+    if (!useLocalModel || !llmMessages) {
+      const primary = formatHitAnswer(top);
+      const extras = hits
+        .slice(1, 2)
+        .map((h) => formatHitAnswer(h))
+        .filter((a) => a && a !== primary && a.length < 600);
+      let message = primary.slice(0, 1200);
+      if (extras.length && primary.length < 400) {
+        message = `${message}\n\n${extras[0]!.slice(0, 500)}`;
+      }
+      if (message.length >= 1200) message += '…';
+      return {
+        message,
+        source: 'knowledge',
+        confidence: top.confidence,
+        citations,
+      };
+    }
+
+    const result = await this.provider.complete(llmMessages);
+    if (!result.ok || !result.content) {
+      return {
+        message: formatHitAnswer(top).slice(0, 1200),
+        source: 'knowledge',
+        confidence: top.confidence,
+        citations,
+      };
+    }
+
+    return {
+      message: result.content,
+      source: 'local-model+knowledge',
+      confidence: Math.max(top.confidence, 0.75),
+      citations,
+    };
+  }
+}
+
+export function createAiProviderFromEnv(env: NodeJS.ProcessEnv): AiProvider {
+  const provider = (env.AI_PROVIDER ?? 'null').toLowerCase();
+
+  // Local fine-tuned model served on your machine (no cloud LLM API).
+  if (provider === 'local' || provider === 'local-finetuned') {
+    return new OpenAiCompatibleProvider(
+      env.AI_API_KEY || 'local',
+      env.AI_BASE_URL ?? 'http://127.0.0.1:8090/v1',
+      env.AI_MODEL ?? 'acocam-lora',
+      'local-finetuned',
+    );
+  }
+
+  if (provider === 'openai' || provider === 'openai-compatible') {
+    const key = env.AI_API_KEY ?? '';
+    if (!key) return new NullAiProvider();
+    return new OpenAiCompatibleProvider(
+      key,
+      env.AI_BASE_URL ?? 'https://api.openai.com/v1',
+      env.AI_MODEL ?? 'gpt-4o-mini',
+    );
+  }
+  return new NullAiProvider();
+}

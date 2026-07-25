@@ -1,0 +1,11 @@
+{
+  "theme": {
+    "primaryColor": "#0f766e",
+    "secondaryColor": "#134e4a",
+    "backgroundColor": "#ffffff",
+    "textColor": "#0f172a",
+    "fontFamily": "Segoe UI, system-ui, sans-serif",
+    "position": "bottom-right",
+    "launcherLabel": "Chat"
+  }
+}

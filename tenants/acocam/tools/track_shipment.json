@@ -1,0 +1,12 @@
+{
+  "id": "track_shipment",
+  "label": "Track shipment",
+  "method": "GET",
+  "path": "/api/shipments/track/{trackingNumber}",
+  "baseUrlEnv": "ACOCAM_API_BASE_URL",
+  "requireAuth": false,
+  "pathParams": ["trackingNumber"],
+  "inputFrom": {
+    "trackingNumber": "trackingNumber"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "human_escalation",
+  "intent": "support.human",
+  "label": "Human agent",
+  "intro": "I will collect a few details so a human ACOCAM agent can help you.",
+  "steps": [
+    { "id": "name", "prompt": "What is your full name?", "required": true, "validator": "text" },
+    { "id": "email", "prompt": "What is your email?", "required": true, "validator": "email" },
+    { "id": "phone", "prompt": "What is your phone number?", "required": true, "validator": "phone" },
+    { "id": "reason", "prompt": "Briefly, how can the agent help?", "required": true, "validator": "text" }
+  ],
+  "completionMessage": "Thanks — transferring you with this summary.",
+  "onComplete": { "action": "escalation" }
+}

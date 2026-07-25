@@ -1,0 +1,87 @@
+import type { WorkflowDefinition, WorkflowProgress, WorkflowStep } from '@agent-platform/domain';
+
+function validate(step: WorkflowStep, value: string): string | null {
+  const v = value.trim();
+  if (!v && step.required !== false) return 'Please provide a value.';
+  switch (step.validator) {
+    case 'email':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? null : 'Please enter a valid email.';
+    case 'phone':
+      return v.replace(/\D/g, '').length >= 7 ? null : 'Please enter a valid phone number.';
+    case 'number':
+      return Number.isFinite(Number(v)) ? null : 'Please enter a number.';
+    case 'choice':
+      if (!step.choices?.length) return null;
+      return step.choices.some((c) => c.toLowerCase() === v.toLowerCase())
+        ? null
+        : `Please choose one of: ${step.choices.join(', ')}`;
+    case 'tracking_ref':
+      return v.length >= 4 ? null : 'Please enter a valid tracking or reference number.';
+    default:
+      return null;
+  }
+}
+
+export class WorkflowEngine {
+  start(def: WorkflowDefinition): { progress: WorkflowProgress; message: string } {
+    const progress: WorkflowProgress = {
+      workflowId: def.id,
+      intent: def.intent,
+      status: 'active',
+      stepIndex: 0,
+      data: {},
+      lastError: null,
+    };
+    const first = def.steps[0];
+    const message = [def.intro, first?.prompt].filter(Boolean).join('\n\n');
+    return { progress, message };
+  }
+
+  advance(
+    def: WorkflowDefinition,
+    progress: WorkflowProgress,
+    userInput: string,
+  ): { progress: WorkflowProgress; message: string; complete: boolean } {
+    if (progress.status !== 'active') {
+      return { progress, message: 'This workflow is already finished.', complete: true };
+    }
+
+    const lower = userInput.trim().toLowerCase();
+    if (['cancel', 'stop', 'never mind', 'nevermind'].includes(lower)) {
+      progress.status = 'cancelled';
+      return { progress, message: 'Okay, I cancelled that request. How else can I help?', complete: true };
+    }
+    if (['restart', 'start over', 'reset'].includes(lower)) {
+      const restarted = this.start(def);
+      return { progress: restarted.progress, message: restarted.message, complete: false };
+    }
+
+    const step = def.steps[progress.stepIndex];
+    if (!step) {
+      progress.status = 'complete';
+      return { progress, message: def.completionMessage, complete: true };
+    }
+
+    const err = validate(step, userInput);
+    if (err) {
+      progress.lastError = err;
+      return {
+        progress,
+        message: `${err}${step.help ? `\n${step.help}` : ''}\n\n${step.prompt}`,
+        complete: false,
+      };
+    }
+
+    progress.data[step.id] = userInput.trim();
+    progress.lastError = null;
+    progress.stepIndex += 1;
+
+    if (progress.stepIndex >= def.steps.length) {
+      progress.status = 'complete';
+      return { progress, message: def.completionMessage, complete: true };
+    }
+
+    const next = def.steps[progress.stepIndex]!;
+    return { progress, message: next.prompt, complete: false };
+  }
+}

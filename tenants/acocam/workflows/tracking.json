@@ -1,0 +1,17 @@
+{
+  "id": "tracking",
+  "intent": "shipment.track",
+  "label": "Track shipment",
+  "intro": "I can look up live tracking when a tracking or file number is provided.",
+  "steps": [
+    {
+      "id": "trackingNumber",
+      "prompt": "Please enter your booking, container, B/L, HBL, AWB, or ACOCAM file / tracking number.",
+      "required": true,
+      "validator": "tracking_ref",
+      "help": "Example: ACO-123456 or your carrier tracking reference."
+    }
+  ],
+  "completionMessage": "Looking up tracking now…",
+  "onComplete": { "action": "tool", "toolId": "track_shipment" }
+}

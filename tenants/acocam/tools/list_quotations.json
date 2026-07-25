@@ -1,0 +1,8 @@
+{
+  "id": "list_quotations",
+  "label": "List quotations",
+  "method": "GET",
+  "path": "/api/quotations",
+  "baseUrlEnv": "ACOCAM_API_BASE_URL",
+  "requireAuth": true
+}

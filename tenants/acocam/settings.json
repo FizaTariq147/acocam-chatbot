@@ -1,0 +1,23 @@
+{
+  "tenantId": "acocam",
+  "name": "ACOCAM Trading Inc.",
+  "publishableKey": "pk_acocam_demo",
+  "secretKey": "sk_acocam_demo_secret",
+  "agents": [
+    {
+      "id": "customer-support",
+      "name": "ACOCAM Assistant",
+      "welcome": "Hello and welcome to ACOCAM Trading Inc., your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation.\n\nHow may I assist you today?",
+      "defaultLanguage": "en",
+      "confidenceThreshold": 0.4,
+      "escalationFailureThreshold": 2,
+      "aiProvider": "null"
+    }
+  ],
+  "features": {
+    "workflows": true,
+    "tools": true,
+    "escalation": true,
+    "streaming": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "air_freight",
+  "intent": "air.freight",
+  "label": "Air freight",
+  "intro": "Air freight requests need exact commodity and measurements. Batteries/liquids must be disclosed.",
+  "steps": [
+    { "id": "commodity", "prompt": "Exact commodity description?", "required": true, "validator": "text" },
+    { "id": "packages", "prompt": "Package count?", "required": true, "validator": "text" },
+    { "id": "weight_dims", "prompt": "Actual weight and dimensions?", "required": true, "validator": "text" },
+    { "id": "value", "prompt": "Declared value (approx)?", "required": true, "validator": "text" },
+    { "id": "hazards", "prompt": "Any batteries, liquids, or regulated items? (yes/no + details)", "required": true, "validator": "text" },
+    { "id": "route", "prompt": "Origin and destination?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Follow-up email?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Air freight details collected. Regulated items will be reviewed by a human before acceptance.",
+  "onComplete": { "action": "escalation" }
+}

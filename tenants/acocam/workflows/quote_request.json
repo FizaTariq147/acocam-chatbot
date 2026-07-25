@@ -1,0 +1,16 @@
+{
+  "id": "quote_request",
+  "intent": "quote.request",
+  "label": "Quote request",
+  "intro": "I can help prepare a quote request. Quotes are subject to ACOCAM review — I will never invent a price.",
+  "steps": [
+    { "id": "origin", "prompt": "What is the origin city/country?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "What is the destination city/country?", "required": true, "validator": "text" },
+    { "id": "cargo", "prompt": "Briefly describe the cargo / commodity.", "required": true, "validator": "text" },
+    { "id": "weight", "prompt": "Approximate total weight (kg) or CBM?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "What email should we use for follow-up?", "required": true, "validator": "email" },
+    { "id": "contact_phone", "prompt": "What is the best phone number?", "required": true, "validator": "phone" }
+  ],
+  "completionMessage": "Thank you. Your quote request details have been collected. An ACOCAM specialist will review and follow up — no price has been confirmed in chat.",
+  "onComplete": { "action": "escalation" }
+}

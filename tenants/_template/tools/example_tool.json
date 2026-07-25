@@ -1,0 +1,8 @@
+{
+  "id": "example_tool",
+  "label": "Example HTTP tool",
+  "method": "GET",
+  "path": "/health",
+  "baseUrlEnv": "API_BASE_URL",
+  "requireAuth": false
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ai-agent-platform",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @agent-platform/domain -w @agent-platform/engines -w @agent-platform/application -w @agent-platform/sdk-js -w @agent-platform/api",
+    "dev": "npm run dev -w @agent-platform/api",
+    "start": "npm run start -w @agent-platform/api",
+    "reindex": "npm run reindex -w @agent-platform/api",
+    "train:prepare": "python ml/prepare_dataset.py",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

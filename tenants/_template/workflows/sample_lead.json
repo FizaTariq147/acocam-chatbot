@@ -1,0 +1,12 @@
+{
+  "id": "sample_lead",
+  "intent": "faq.general",
+  "label": "Sample lead",
+  "intro": "Example workflow — customize for your company.",
+  "steps": [
+    { "id": "name", "prompt": "What is your name?", "required": true, "validator": "text" },
+    { "id": "email", "prompt": "What is your email?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Thanks — we will follow up.",
+  "onComplete": { "action": "none" }
+}

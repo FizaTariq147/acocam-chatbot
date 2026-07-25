@@ -1,0 +1,12 @@
+{
+  "theme": {
+    "primaryColor": "#0b3d2e",
+    "secondaryColor": "#c5a46e",
+    "backgroundColor": "#ffffff",
+    "textColor": "#12241c",
+    "fontFamily": "Georgia, 'Times New Roman', serif",
+    "position": "bottom-right",
+    "launcherLabel": "Chat with ACOCAM",
+    "logoUrl": ""
+  }
+}

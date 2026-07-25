@@ -1,0 +1,22 @@
+{
+  "id": "ocean_fcl",
+  "intent": "ocean.fcl",
+  "label": "Ocean FCL",
+  "intro": "Let's collect details for a full-container (FCL) ocean request.",
+  "steps": [
+    { "id": "origin", "prompt": "Origin port/city?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Destination port/city?", "required": true, "validator": "text" },
+    {
+      "id": "container_type",
+      "prompt": "Preferred container? (20FT / 40FT / 40HC)",
+      "required": true,
+      "validator": "choice",
+      "choices": ["20FT", "40FT", "40HC"]
+    },
+    { "id": "cargo", "prompt": "Cargo list / commodity?", "required": true, "validator": "text" },
+    { "id": "weight", "prompt": "Approximate weight?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Follow-up email?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "FCL details captured for specialist review. Availability is always subject to quote.",
+  "onComplete": { "action": "escalation" }
+}

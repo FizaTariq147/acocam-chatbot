@@ -1,0 +1,7 @@
+{
+  "softTriggers": ["speak to human", "talk to agent", "real person", "human please"],
+  "hardTriggers": ["complaint", "lawyer", "legal", "refund", "fraud"],
+  "failureThreshold": 2,
+  "offerPhrases": ["Would you like me to connect you with a human agent?"],
+  "refusalPatterns": ["password", "credit card", "ssn", "social security"]
+}

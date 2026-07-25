@@ -1,0 +1,22 @@
+{
+  "tenantId": "example",
+  "name": "Example Company",
+  "publishableKey": "pk_example_change_me",
+  "secretKey": "sk_example_change_me",
+  "agents": [
+    {
+      "id": "customer-support",
+      "name": "Example Assistant",
+      "welcome": "Hello! How can I help you today?",
+      "defaultLanguage": "en",
+      "confidenceThreshold": 0.45,
+      "escalationFailureThreshold": 2
+    }
+  ],
+  "features": {
+    "workflows": true,
+    "tools": true,
+    "escalation": true,
+    "streaming": false
+  }
+}

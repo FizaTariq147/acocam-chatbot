@@ -1,0 +1,8 @@
+{
+  "id": "get_profile",
+  "label": "Get profile",
+  "method": "GET",
+  "path": "/api/users/me",
+  "baseUrlEnv": "ACOCAM_API_BASE_URL",
+  "requireAuth": true
+}

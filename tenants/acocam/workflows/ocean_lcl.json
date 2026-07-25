@@ -1,0 +1,16 @@
+{
+  "id": "ocean_lcl",
+  "intent": "ocean.lcl",
+  "label": "Ocean LCL",
+  "intro": "Let's collect details for ocean groupage / LCL.",
+  "steps": [
+    { "id": "packages", "prompt": "How many packages?", "required": true, "validator": "text" },
+    { "id": "contents", "prompt": "What are the contents?", "required": true, "validator": "text" },
+    { "id": "weight_dims", "prompt": "Weight and dimensions/CBM?", "required": true, "validator": "text" },
+    { "id": "origin", "prompt": "Origin?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Destination?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Follow-up email?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "LCL request collected for quote review.",
+  "onComplete": { "action": "escalation" }
+}

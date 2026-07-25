@@ -1,0 +1,14 @@
+{
+  "name": "@agent-platform/sdk-js",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/agent-embed.js",
+  "scripts": {
+    "build": "esbuild src/agent-embed.ts --bundle --outfile=dist/agent-embed.js --format=iife --target=es2018 --minify",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3"
+  }
+}

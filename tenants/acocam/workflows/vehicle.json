@@ -1,0 +1,17 @@
+{
+  "id": "vehicle",
+  "intent": "vehicle.ship",
+  "label": "Vehicle shipping",
+  "intro": "I can collect vehicle shipping details for specialist review.",
+  "steps": [
+    { "id": "vehicle_type", "prompt": "Vehicle type (car, SUV, motorcycle, etc.)?", "required": true, "validator": "text" },
+    { "id": "year", "prompt": "Year?", "required": true, "validator": "text" },
+    { "id": "vin", "prompt": "VIN (or say unknown)?", "required": true, "validator": "text" },
+    { "id": "origin", "prompt": "Origin city/country?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Destination city/country?", "required": true, "validator": "text" },
+    { "id": "condition", "prompt": "Running condition / notes?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Follow-up email?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Vehicle shipping request collected for quote review.",
+  "onComplete": { "action": "escalation" }
+}
