@@ -41,6 +41,8 @@ export interface WorkflowDefinition {
   intro: string;
   steps: WorkflowStep[];
   completionMessage: string;
+  /** When true, workflow/API submission needs a signed-in customer JWT. */
+  requireAuth?: boolean;
   onComplete?: { action: 'tool' | 'escalation' | 'none'; toolId?: string };
 }
 
@@ -62,6 +64,8 @@ export interface ToolDefinition {
   requireAuth?: boolean;
   inputFrom?: Record<string, string>;
   pathParams?: string[];
+  /** Nested POST body: leaf values are slot keys. */
+  bodyFrom?: Record<string, unknown>;
 }
 
 export interface ThemeConfig {
@@ -87,12 +91,19 @@ export interface AgentSettings {
   aiModel?: string;
 }
 
+export interface TenantPortalConfig {
+  loginUrl: string;
+  signupUrl: string;
+  quoteUrl?: string;
+}
+
 export interface TenantSettings {
   tenantId: string;
   name: string;
   publishableKey: string;
   secretKey: string;
   agents: AgentSettings[];
+  portal?: TenantPortalConfig;
   features?: {
     workflows?: boolean;
     tools?: boolean;

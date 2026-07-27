@@ -44,7 +44,8 @@ Additional: +1 438 230 4139
 Email: info@acocamtrading.ca  
 Address: 357 Collishaw Street, Unit 4, Moncton, NB, Canada  
 Website: https://acocamtrading.ca/  
-Get Quote: https://acocamtrading.ca/ (Get Quote)  
+Get Quote: https://acocamtrading.ca/get-quote/  
+Log in: https://acocamtrading.ca/login  
 Track: use Track Now on the website or share your tracking number here.
 
 Q11. What is ACOCAM’s mission?
@@ -53,7 +54,7 @@ ACOCAM Trading Inc. bridges North America, Africa, and global trade with reliabl
 
 Q12. How do I get a free quote or book a shipment on the website?
 
-Use Get Quote / Book Now on https://acocamtrading.ca/, or tell me here that you want a quote. I will collect origin, destination, cargo details, weight/dimensions, and your contact information, then our team will review and confirm pricing and booking.
+Use [Get a quote online](https://acocamtrading.ca/get-quote/) or [log in](https://acocamtrading.ca/login) at acocamtrading.ca, or tell me here that you want a quote. I will collect origin, destination, cargo details, weight/dimensions, and your contact information, then our team will review and confirm pricing and booking.
 
 Q13. What is LCL?
 

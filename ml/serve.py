@@ -39,11 +39,36 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 700
 
 
-def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
-    tokenizer = AutoTokenizer.from_pretrained(adapter, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+def adapter_is_ready(adapter: Path) -> bool:
+    if not adapter.is_dir():
+        return False
+    markers = (
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "adapter_model.bin",
+    )
+    return any((adapter / name).exists() for name in markers)
 
+
+def load_tokenizer(base_model: str, adapter: str):
+    """Load tokenizer from base model; adapter dirs often lack a full tokenizer."""
+    last_err: Exception | None = None
+    for source in (base_model, adapter):
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            return tokenizer
+        except Exception as exc:
+            last_err = exc
+    raise RuntimeError(
+        f"Could not load tokenizer from base model ({base_model}) or adapter ({adapter}). "
+        "Install ml/requirements.txt (sentencepiece, tiktoken) and verify the base model name."
+    ) from last_err
+
+
+def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
+    tokenizer = load_tokenizer(base_model, adapter)
     load_kwargs: dict[str, Any] = {
         "trust_remote_code": True,
         "device_map": None,
@@ -150,6 +175,15 @@ def main() -> None:
             "Train first:\n"
             "  python ml/prepare_dataset.py\n"
             "  python ml/train_lora.py\n"
+        )
+    if not adapter_is_ready(adapter):
+        raise SystemExit(
+            f"Adapter directory exists but no trained weights found: {adapter}\n"
+            "Expected adapter_config.json + adapter_model.safetensors (training must finish).\n"
+            "Train first:\n"
+            "  python ml/prepare_dataset.py\n"
+            "  python ml/train_lora.py --cpu --small\n"
+            "If training was interrupted, delete ml/models/acocam-lora and re-run training."
         )
 
     # Prefer base model recorded during training when available

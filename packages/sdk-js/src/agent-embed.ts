@@ -18,7 +18,7 @@ type PublicConfig = {
 
 type TurnResponse = {
   message: string;
-  actions?: Array<{ id: string; label: string }>;
+  actions?: Array<{ id: string; label: string; url?: string }>;
   escalate?: boolean;
 };
 
@@ -30,6 +30,30 @@ type TurnResponse = {
   const agent = script.getAttribute('data-agent') || 'customer-support';
   const key = script.getAttribute('data-key') || '';
   const apiBase = (script.getAttribute('data-api') || '/v1').replace(/\/$/, '');
+
+  function resolveCustomerToken(): string {
+    const fromAttr = script!.getAttribute('data-customer-token')?.trim();
+    if (fromAttr) return fromAttr;
+
+    const storageKey = script!.getAttribute('data-customer-token-key')?.trim();
+    if (storageKey) {
+      const stored =
+        localStorage.getItem(storageKey) ||
+        sessionStorage.getItem(storageKey) ||
+        '';
+      if (stored) return stored;
+    }
+
+    for (const keyName of ['token', 'authToken', 'accessToken', 'access_token', 'jwt']) {
+      const stored = localStorage.getItem(keyName) || sessionStorage.getItem(keyName);
+      if (stored?.trim()) return stored.trim();
+    }
+
+    const globalToken = (window as { ACOCAM_AUTH_TOKEN?: string }).ACOCAM_AUTH_TOKEN;
+    return typeof globalToken === 'string' ? globalToken.trim() : '';
+  }
+
+  const customerToken = resolveCustomerToken();
 
   let sessionId: string | null = null;
   let config: PublicConfig | null = null;
@@ -67,9 +91,112 @@ type TurnResponse = {
   }
 
   function appendBubble(log: HTMLElement, role: 'user' | 'assistant', text: string) {
-    const bubble = el('div', { className: `aap-bubble aap-${role}` }, [text]);
+    const bubble = el('div', { className: `aap-bubble aap-${role}` });
+    appendRichContent(bubble, text);
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
+  }
+
+  type RichSegment =
+    | { kind: 'text'; value: string }
+    | { kind: 'link'; label: string; href: string }
+    | { kind: 'url'; href: string; label: string }
+    | { kind: 'email'; address: string }
+    | { kind: 'bold'; value: string };
+
+  function normalizeUrl(raw: string): { href: string; label: string } {
+    let label = raw;
+    let href = raw;
+    const trailing = label.match(/([.,;:!?)]+)$/);
+    if (trailing) {
+      label = label.slice(0, -trailing[1].length);
+      href = href.slice(0, -trailing[1].length);
+    }
+    if (/^www\./i.test(href)) href = `https://${href}`;
+    return { href, label };
+  }
+
+  function parseInlineSegments(text: string): RichSegment[] {
+    const segments: RichSegment[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const rest = text.slice(i);
+      const mdLink = rest.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/);
+      if (mdLink) {
+        segments.push({ kind: 'link', label: mdLink[1]!, href: mdLink[2]! });
+        i += mdLink[0].length;
+        continue;
+      }
+      const bold = rest.match(/^\*\*([^*]+)\*\*/);
+      if (bold) {
+        segments.push({ kind: 'bold', value: bold[1]! });
+        i += bold[0].length;
+        continue;
+      }
+      const url = rest.match(/^(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+)/i);
+      if (url) {
+        const normalized = normalizeUrl(url[0]);
+        segments.push({ kind: 'url', href: normalized.href, label: normalized.label });
+        i += url[0].length;
+        continue;
+      }
+      const email = rest.match(/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      if (email) {
+        segments.push({ kind: 'email', address: email[0] });
+        i += email[0].length;
+        continue;
+      }
+      const nextSpecial = rest.search(/\n|\[|\*\*|https?:\/\/|www\.|[a-zA-Z0-9._%+-]+@/i);
+      const end = nextSpecial === -1 ? rest.length : nextSpecial;
+      if (end === 0) {
+        segments.push({ kind: 'text', value: text[i]! });
+        i += 1;
+      } else {
+        segments.push({ kind: 'text', value: rest.slice(0, end) });
+        i += end;
+      }
+    }
+    return segments;
+  }
+
+  function parseRichSegments(text: string): RichSegment[] {
+    const parts = text.split(/(```[\s\S]*?```)/g);
+    const segments: RichSegment[] = [];
+    for (const part of parts) {
+      if (part.startsWith('```') && part.endsWith('```')) {
+        segments.push({ kind: 'text', value: part });
+        continue;
+      }
+      segments.push(...parseInlineSegments(part));
+    }
+    return segments;
+  }
+
+  function appendRichContent(container: HTMLElement, text: string) {
+    for (const segment of parseRichSegments(text)) {
+      if (segment.kind === 'text') {
+        container.appendChild(document.createTextNode(segment.value));
+        continue;
+      }
+      if (segment.kind === 'bold') {
+        const strong = document.createElement('strong');
+        strong.textContent = segment.value;
+        container.appendChild(strong);
+        continue;
+      }
+      const anchor = document.createElement('a');
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.className = 'aap-link';
+      if (segment.kind === 'email') {
+        anchor.href = `mailto:${segment.address}`;
+        anchor.textContent = segment.address;
+      } else {
+        anchor.href = segment.href;
+        anchor.textContent = segment.kind === 'link' ? segment.label : segment.label;
+      }
+      container.appendChild(anchor);
+    }
   }
 
   async function ensureSession() {
@@ -81,17 +208,77 @@ type TurnResponse = {
     sessionId = created.sessionId;
   }
 
-  async function sendMessage(text: string, actionId?: string, log?: HTMLElement) {
+  function messageBody(text: string, actionId?: string): string {
+    const payload: { message: string; actionId?: string; customerAuthToken?: string } = {
+      message: text || '',
+    };
+    if (actionId) payload.actionId = actionId;
+    if (customerToken) payload.customerAuthToken = customerToken;
+    return JSON.stringify(payload);
+  }
+
+  function bindAction(
+    btn: HTMLButtonElement,
+    action: { id: string; label: string; url?: string },
+    log: HTMLElement,
+    setActions: (actions: Array<{ id: string; label: string; url?: string }>) => void,
+  ) {
+    btn.addEventListener('click', () => {
+      if (action.url) {
+        window.open(action.url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      void (async () => {
+        try {
+          await ensureSession();
+          appendBubble(log, 'user', action.label);
+          const result = await api<TurnResponse>(
+            `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
+            {
+              method: 'POST',
+              body: messageBody('', action.id),
+            },
+          );
+          appendBubble(log, 'assistant', result.message);
+          if (result.actions?.length) setActions(result.actions);
+        } catch (err) {
+          appendBubble(log, 'assistant', err instanceof Error ? err.message : 'Request failed');
+        }
+      })();
+    });
+  }
+
+  function renderActions(
+    container: HTMLElement,
+    actions: Array<{ id: string; label: string; url?: string }>,
+    log: HTMLElement,
+    setActions: (actions: Array<{ id: string; label: string; url?: string }>) => void,
+  ) {
+    container.replaceChildren();
+    for (const action of actions) {
+      const btn = el('button', { type: 'button' }, [action.label]) as HTMLButtonElement;
+      bindAction(btn, action, log, setActions);
+      container.appendChild(btn);
+    }
+  }
+
+  async function sendMessage(
+    text: string,
+    actionId: string | undefined,
+    log: HTMLElement,
+    setActions: (actions: Array<{ id: string; label: string; url?: string }>) => void,
+  ) {
     await ensureSession();
-    if (log && text) appendBubble(log, 'user', text);
+    if (text) appendBubble(log, 'user', text);
     const result = await api<TurnResponse>(
       `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
       {
         method: 'POST',
-        body: JSON.stringify({ message: text || '', actionId }),
+        body: messageBody(text, actionId),
       },
     );
-    if (log) appendBubble(log, 'assistant', result.message);
+    appendBubble(log, 'assistant', result.message);
+    if (result.actions?.length) setActions(result.actions);
     return result;
   }
 
@@ -105,7 +292,11 @@ type TurnResponse = {
       .aap-panel.open{display:flex}
       .aap-header{background:linear-gradient(135deg,${cfg.theme.primaryColor},${cfg.theme.secondaryColor});color:#fff;padding:14px 16px;font-weight:700}
       .aap-log{flex:1;overflow:auto;padding:12px;background:#f8fafc}
-      .aap-bubble{max-width:85%;margin:8px 0;padding:10px 12px;border-radius:12px;white-space:pre-wrap;line-height:1.4;font-size:14px}
+      .aap-bubble{max-width:85%;margin:8px 0;padding:10px 12px;border-radius:12px;white-space:pre-wrap;line-height:1.4;font-size:14px;word-break:break-word}
+      .aap-bubble a.aap-link{color:inherit;text-decoration:underline;text-underline-offset:2px}
+      .aap-bubble a.aap-link:hover{opacity:.85}
+      .aap-user a.aap-link{color:#fff}
+      .aap-assistant a.aap-link{color:#2563eb}
       .aap-user{margin-left:auto;background:${cfg.theme.primaryColor};color:#fff}
       .aap-assistant{margin-right:auto;background:#fff;border:1px solid #e2e8f0}
       .aap-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid #e2e8f0;background:#fff}
@@ -118,38 +309,18 @@ type TurnResponse = {
     document.head.appendChild(style);
 
     const log = el('div', { className: 'aap-log' });
+    const actionsBar = el('div', { className: 'aap-actions' });
+    const setActions = (actions: Array<{ id: string; label: string; url?: string }>) => {
+      renderActions(actionsBar, actions, log, setActions);
+    };
+
     const panel = el('div', { className: 'aap-panel' }, [
       el('div', { className: 'aap-header' }, [cfg.name]),
       log,
-      el(
-        'div',
-        { className: 'aap-actions' },
-        cfg.actions.map((a) => {
-          const btn = el('button', { type: 'button' }, [a.label]);
-          btn.addEventListener('click', () => {
-            // Send actionId with empty message so button labels are never
-            // mistaken for tracking numbers or FAQ text.
-            void (async () => {
-              try {
-                await ensureSession();
-                appendBubble(log, 'user', a.label);
-                const result = await api<TurnResponse>(
-                  `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
-                  {
-                    method: 'POST',
-                    body: JSON.stringify({ message: '', actionId: a.id }),
-                  },
-                );
-                appendBubble(log, 'assistant', result.message);
-              } catch (err) {
-                appendBubble(log, 'assistant', err instanceof Error ? err.message : 'Request failed');
-              }
-            })();
-          });
-          return btn;
-        }),
-      ),
+      actionsBar,
     ]);
+
+    renderActions(actionsBar, cfg.actions, log, setActions);
 
     const input = el('input', { type: 'text', placeholder: 'Type a message…' }) as HTMLInputElement;
     const sendBtn = el('button', { type: 'button' }, ['Send']);
@@ -173,7 +344,7 @@ type TurnResponse = {
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      void sendMessage(text, undefined, log).catch((err: Error) => {
+      void sendMessage(text, undefined, log, setActions).catch((err: Error) => {
         appendBubble(log, 'assistant', err.message || 'Something went wrong.');
       });
     };
