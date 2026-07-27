@@ -39,26 +39,89 @@ def main() -> None:
     parser.add_argument("--small", action="store_true", help="Use 0.5B base model")
     parser.add_argument("--epochs", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--max-seq-length", type=int, default=None, help="Forward to train_lora.py")
+    parser.add_argument(
+        "--cpu-dtype",
+        type=str,
+        default="fp16",
+        help="Forward to train_lora.py (fp16 = lowest RAM on Windows CPU).",
+    )
+    parser.add_argument(
+        "--ultra-low-mem",
+        action="store_true",
+        help="Aggressive RAM savings for 8GB machines (recommended on Windows CPU).",
+    )
+    parser.add_argument(
+        "--cpu-offload",
+        action="store_true",
+        help="Forward to train_lora.py: offload weights to disk on CPU load",
+    )
+    parser.add_argument(
+        "--cpu-max-memory",
+        type=str,
+        default="1.5GiB",
+        help="Forward to train_lora.py when using --cpu-offload (e.g. 2GiB)",
+    )
+    parser.add_argument(
+        "--offload-folder",
+        type=str,
+        default="ml/models/acocam-lora/offload",
+        help="Forward to train_lora.py when using --cpu-offload",
+    )
+    parser.add_argument(
+        "--paraphrase-level",
+        type=int,
+        default=3,
+        help="Forward to prepare_dataset.py (0 original, 1 prefixes, 2 rewrites, 3 more paraphrases).",
+    )
+    parser.add_argument(
+        "--max-variants-per-question",
+        type=int,
+        default=24,
+        help="Forward to prepare_dataset.py.",
+    )
     args = parser.parse_args()
 
     py = sys.executable
 
     if not args.train_only:
-        run([py, "ml/prepare_dataset.py"])
+        run(
+            [
+                py,
+                "ml/prepare_dataset.py",
+                "--paraphrase-level",
+                str(args.paraphrase_level),
+                "--max-variants-per-question",
+                str(args.max_variants_per_question),
+            ],
+        )
 
     if args.prepare_only:
-        print("\nPrepare done. Next: python ml/train_lora.py")
+        print("\nPrepare done.")
+        print("Paraphrase-friendly FAQ (no GPU training needed):")
+        print("  npm run reindex && npm run dev")
+        print("Optional LoRA train (8GB+ RAM or GPU):")
+        print("  python ml/train_lora.py --cpu --small --cpu-offload --ultra-low-mem")
         return
 
     train_cmd = [py, "ml/train_lora.py"]
     if args.cpu:
         train_cmd.append("--cpu")
+        train_cmd.extend(["--cpu-dtype", args.cpu_dtype])
+        if args.cpu_offload or args.ultra_low_mem:
+            train_cmd.append("--cpu-offload")
+            train_cmd.extend(["--cpu-max-memory", args.cpu_max_memory])
+            train_cmd.extend(["--offload-folder", args.offload_folder])
+        if args.ultra_low_mem:
+            train_cmd.append("--ultra-low-mem")
     if args.small:
         train_cmd.append("--small")
     if args.epochs is not None:
         train_cmd.extend(["--epochs", str(args.epochs)])
     if args.batch_size is not None:
         train_cmd.extend(["--batch-size", str(args.batch_size)])
+    if args.max_seq_length is not None:
+        train_cmd.extend(["--max-seq-length", str(args.max_seq_length)])
     # Sensible CPU defaults when user did not override
     if args.cpu and args.epochs is None:
         train_cmd.extend(["--epochs", "2"])

@@ -4,7 +4,7 @@ Train a small open-source model on ACOCAM knowledge-base Q&A pairs, then serve i
 
 ## What this does
 
-1. Extracts every `Qn. …` / answer pair from `knowledge base/*.md` (de-duplicated)
+1. Extracts every `Qn. …` / answer pair from `tenants/acocam/knowledge/*.md` by default (de-duplicated)
 2. Writes `ml/data/acocam_sft.jsonl` + `tenants/acocam/knowledge/knowledge-qa.md`
 3. LoRA fine-tunes `Qwen/Qwen2.5-1.5B-Instruct` (default). Use `--small` for `0.5B` if memory is tight.
 4. Serves `http://127.0.0.1:8090/v1/chat/completions`
@@ -54,6 +54,12 @@ python ml\train_pipeline.py --serve
 
 ```powershell
 python ml\prepare_dataset.py
+```
+
+Generate more paraphrases (recommended when you add new/custom FAQ data):
+
+```powershell
+python ml\prepare_dataset.py --paraphrase-level 3 --max-variants-per-question 24
 ```
 
 Writes:

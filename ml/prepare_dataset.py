@@ -46,6 +46,55 @@ def normalize_question(text: str) -> str:
     return re.sub(r"[^a-z0-9\s]", " ", text.lower()).strip()
 
 
+def rewrite_question(q: str) -> list[str]:
+    """
+    Deterministic question rewrites to improve robustness to paraphrases.
+    Keeps the meaning close, but changes wording/style.
+    """
+    s = q.strip()
+    s_no_q = s.rstrip("?").strip()
+    out: list[str] = []
+
+    m = re.match(r"^what\s+is\s+(.+)$", s_no_q, flags=re.IGNORECASE)
+    if m:
+        topic = m.group(1).strip()
+        return [
+            f"What does {topic} mean?",
+            f"Explain {topic} in simple terms.",
+            f"Can you explain what {topic} is?",
+        ]
+
+    m = re.match(r"^how\s+(do\s+you|do\s+i|can\s+i|can\s+you)\s+(.+)$", s_no_q, flags=re.IGNORECASE)
+    if m:
+        rest = m.group(2).strip()
+        return [
+            f"How can I {rest}?",
+            f"What is the process to {rest}?",
+        ]
+
+    m = re.match(r"^do\s+you\s+(.+)$", s_no_q, flags=re.IGNORECASE)
+    if m:
+        rest = m.group(1).strip()
+        return [
+            f"Can you {rest}?",
+            f"Do you offer {rest}?",
+        ]
+
+    m = re.match(r"^where\s+is\s+(.+)$", s_no_q, flags=re.IGNORECASE)
+    if m:
+        rest = m.group(1).strip()
+        return [
+            "Where are you located?",
+            f"What is the address for {rest}?",
+        ]
+
+    # Generic fallback rewrites (style changes)
+    return [
+        f"Can you tell me: {s_no_q}?",
+        f"In simple terms, {s_no_q}?",
+    ]
+
+
 def extract_qa_pairs(md: str) -> list[dict[str, str]]:
     pairs: list[dict[str, str]] = []
     current_q: str | None = None
@@ -110,21 +159,74 @@ def to_chat_example(question: str, answer: str) -> dict:
     }
 
 
-def expand(pairs: list[dict[str, str]]) -> list[dict]:
+def expand(
+    pairs: list[dict[str, str]],
+    paraphrase_level: int,
+    max_variants_per_question: int,
+) -> list[dict]:
+    """
+    Build SFT rows for each Q&A pair.
+
+    paraphrase_level:
+      0 = original only
+      1 = prefix-based (backward compatible)
+      2 = add deterministic rewrite rules
+      3 = add extra style wrappers
+    """
+
     rows: list[dict] = []
     for p in pairs:
         q = p["question"]
         a = p["answer"]
-        for prefix in PARAPHRASE_PREFIXES:
-            rows.append(to_chat_example(f"{prefix}{q}".strip(), a))
-        q2 = q.rstrip("?").strip()
-        if q2 != q:
-            rows.append(to_chat_example(q2 + "?", a))
+
+        variants: list[str] = []
+        seen: set[str] = set()
+
+        def add_variant(v: str) -> None:
+            v = v.strip()
+            if not v:
+                return
+            key = normalize_question(v)
+            if key in seen:
+                return
+            seen.add(key)
+            variants.append(v)
+
+        if paraphrase_level >= 1:
+            for prefix in PARAPHRASE_PREFIXES:
+                add_variant(f"{prefix}{q}".strip())
+            q2 = q.rstrip("?").strip()
+            if q2 != q:
+                add_variant(q2 + "?")
+        else:
+            add_variant(q)
+
+        if paraphrase_level >= 2:
+            for v in rewrite_question(q):
+                add_variant(v)
+
+        if paraphrase_level >= 3:
+            q2 = q.rstrip("?").strip()
+            add_variant(f"Please answer this: {q2}?")
+            add_variant(f"I want to know about: {q2}?")
+
+        variants = variants[:max_variants_per_question]
+        for v in variants:
+            rows.append(to_chat_example(v, a))
+
     return rows
 
 
 def resolve_kb_files(kb_dir: Path, extra: list[Path]) -> list[Path]:
-    files = sorted(p for p in kb_dir.glob("**/*.md") if p.is_file()) if kb_dir.exists() else []
+    files = (
+        sorted(
+            p
+            for p in kb_dir.glob("**/*.md")
+            if p.is_file() and p.name.lower() != "knowledge-qa.md"
+        )
+        if kb_dir.exists()
+        else []
+    )
     for p in extra:
         resolved = resolve_repo_path(p) if not p.is_absolute() else p
         if resolved.is_file() and resolved not in files:
@@ -159,6 +261,19 @@ def main() -> None:
         action="store_true",
         help="Skip writing the merged knowledge markdown",
     )
+
+    parser.add_argument(
+        "--paraphrase-level",
+        type=int,
+        default=1,
+        help="0=original only, 1=prefixes, 2=rewrites, 3=more style paraphrases",
+    )
+    parser.add_argument(
+        "--max-variants-per-question",
+        type=int,
+        default=18,
+        help="Cap generated question variants per Q&A pair",
+    )
     args = parser.parse_args()
 
     kb_dir = resolve_repo_path(args.kb_dir)
@@ -171,7 +286,11 @@ def main() -> None:
 
     merged, per_file = collect_pairs(kb_files)
     pairs = list(merged.values())
-    rows = expand(pairs)
+    rows = expand(
+        pairs,
+        paraphrase_level=args.paraphrase_level,
+        max_variants_per_question=args.max_variants_per_question,
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
@@ -195,6 +314,8 @@ def main() -> None:
         "training_rows": len(rows),
         "merged_knowledge_file": str(emit_path) if emit_path else None,
         "dataset": str(out_path),
+        "paraphrase_level": args.paraphrase_level,
+        "max_variants_per_question": args.max_variants_per_question,
     }
     out_path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(json.dumps(meta, indent=2))
