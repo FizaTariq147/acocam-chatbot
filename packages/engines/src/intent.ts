@@ -4,10 +4,20 @@ function normalize(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function hasKeyword(text: string, keyword: string): boolean {
+  const k = normalize(keyword);
+  if (!k) return false;
+  if (k.includes(' ')) return text.includes(k);
+  // Whole-word match so short keywords like "air" don't fire inside other words
+  return new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text);
+}
+
 export class IntentEngine {
   detect(message: string, intents: IntentDefinition[], actionId?: string): IntentResult {
     if (actionId) {
-      const byAction = intents.find((i) => i.code === actionId || i.workflowId === actionId || i.toolId === actionId);
+      const byAction = intents.find(
+        (i) => i.code === actionId || i.workflowId === actionId || i.toolId === actionId,
+      );
       if (byAction) {
         return {
           intent: byAction.code,
@@ -29,12 +39,11 @@ export class IntentEngine {
           else if (text.includes(p)) score += 0.75;
         }
         for (const kw of intent.keywords ?? []) {
-          const k = normalize(kw);
-          if (k && text.includes(k)) score += 0.2;
+          if (hasKeyword(text, kw)) score += 0.2;
         }
         for (const pat of intent.patterns ?? []) {
           try {
-            if (new RegExp(pat, 'i').test(message)) score += 0.45;
+            if (new RegExp(pat, 'i').test(message)) score += 0.55;
           } catch {
             /* ignore bad patterns */
           }

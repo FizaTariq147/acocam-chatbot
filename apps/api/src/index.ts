@@ -28,6 +28,9 @@ async function main() {
     decorateReply: false,
   });
 
+  app.get('/', async (_req, reply) => reply.redirect('/demo'));
+  app.get('/favicon.ico', async (_req, reply) => reply.code(204).send());
+
   app.get('/health', async () => ({ ok: true, service: 'ai-agent-platform' }));
   app.get('/v1/health', async () => ({ ok: true }));
 

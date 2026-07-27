@@ -47,6 +47,57 @@ const DEFAULT_ACTIONS: ActionButton[] = [
   { id: 'support.human', label: 'Talk to human' },
 ];
 
+/** Common English words that must never be treated as tracking numbers. */
+const TRACKING_STOPWORDS = new Set(
+  [
+    'shipment', 'shipping', 'services', 'service', 'tracking', 'package', 'packages',
+    'container', 'freight', 'customs', 'document', 'documents', 'worldwide',
+    'individual', 'business', 'customer', 'customer', 'destination', 'destinations',
+    'quotation', 'quotations', 'acocam', 'trading', 'canada', 'africa', 'vehicle',
+    'motorcycle', 'personal', 'effects', 'commercial', 'support', 'customer',
+  ].map((w) => w.toLowerCase()),
+);
+
+/** Strict tracking refs: ACO-#### or alphanumeric tokens that contain a digit. */
+const TRACKING_REF_RE =
+  /\b(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)(?![A-Z]*$)[A-Z0-9-]{8,})\b/gi;
+
+function extractTrackingNumber(message: string): string | undefined {
+  const matches = message.match(TRACKING_REF_RE) ?? [];
+  for (const raw of matches.reverse()) {
+    const cleaned = raw.replace(/\s+/g, '').toUpperCase();
+    if (TRACKING_STOPWORDS.has(cleaned.toLowerCase())) continue;
+    if (!/\d/.test(cleaned)) continue;
+    if (cleaned.length < 6) continue;
+    return cleaned;
+  }
+  return undefined;
+}
+
+function looksLikeFaqQuestion(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  if (!m || m.length < 3) return false;
+  if (m.includes('?')) return true;
+  return /^(what|who|where|when|why|how|do you|does|can you|can i|is |are |which|tell me|explain|please tell)\b/.test(
+    m,
+  );
+}
+
+function looksLikeTransactional(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  // "Can I track…?" / "Do you offer tracking?" are FAQ, not a track request
+  if (
+    /^(can i|do you|does|is it possible|how (can|do) i)\b/.test(m) &&
+    /\b(track|tracking|book|booking|quote)\b/.test(m) &&
+    !/\b(track now|track this|here is my|my (number|ref|awb|bol))\b/.test(m)
+  ) {
+    return false;
+  }
+  return /\b(book|get a quote|request a quote|need a quote|i want to ship|ship my|send my|track my|track now|track shipment|start a booking)\b/.test(
+    m,
+  );
+}
+
 function refusesSensitive(message: string, patterns: string[]): string | null {
   const lower = message.toLowerCase();
   for (const p of patterns) {
@@ -87,11 +138,30 @@ export class ConversationPipeline {
       });
     }
 
-    // Active workflow continues until complete/cancelled
+    // Active workflow continues until complete/cancelled — unless the user
+    // clearly switches to a different transactional intent (e.g. book while tracking).
+    if (state.workflow?.status === 'active') {
+      const switchIntent =
+        !input.actionId &&
+        looksLikeTransactional(input.message) &&
+        !extractTrackingNumber(input.message);
+      if (switchIntent) {
+        state.workflow = null;
+        state.phase = 'idle';
+        state.awaitingSlot = null;
+      }
+    }
+
     if (state.workflow?.status === 'active') {
       const def = pack.workflows[state.workflow.workflowId];
       if (def) {
-        const advanced = this.svc.workflow.advance(def, { ...state.workflow, data: { ...state.workflow.data } }, input.message);
+        const userText =
+          input.actionId === 'cancel' || input.actionId === 'reset' ? 'cancel' : input.message;
+        const advanced = this.svc.workflow.advance(
+          def,
+          { ...state.workflow, data: { ...state.workflow.data } },
+          userText,
+        );
         state.workflow = advanced.progress;
         Object.assign(state.slots, advanced.progress.data);
 
@@ -145,6 +215,23 @@ export class ConversationPipeline {
     const detected = this.svc.intent.detect(input.message, pack.intents, input.actionId);
     const intentDef = this.svc.intent.find(pack.intents, detected.intent);
 
+    // FAQ-style questions should hit the knowledge base first (unless user
+    // clicked an action button or clearly asked to book/track).
+    const preferKnowledge =
+      !input.actionId &&
+      looksLikeFaqQuestion(input.message) &&
+      !looksLikeTransactional(input.message) &&
+      (detected.handler === 'workflow' || detected.handler === 'tool');
+
+    if (preferKnowledge) {
+      const faqAnswer = await this.answerFromKnowledgePath(pack, input, session, state, {
+        intent: detected.intent.startsWith('company.') ? detected.intent : 'company.about',
+        confidence: Math.max(detected.confidence, 0.7),
+      });
+      if (faqAnswer) return faqAnswer;
+      // Fall through to workflow/tool if KB had no confident hit
+    }
+
     const escEarly = this.svc.escalation.detect({
       message: input.message,
       failureStreak: state.failureStreak,
@@ -176,17 +263,19 @@ export class ConversationPipeline {
 
     if (detected.handler === 'tool' && intentDef?.toolId && pack.tools[intentDef.toolId]) {
       const toolDef = pack.tools[intentDef.toolId]!;
-      // For track, try to extract tracking number from message
-      const trackMatch = input.message.match(/[A-Z0-9-]{6,}/i);
-      if (trackMatch && !state.slots.trackingNumber) {
-        state.slots.trackingNumber = trackMatch[0]!;
+      const extracted = extractTrackingNumber(input.message);
+      if (extracted && !state.slots.trackingNumber) {
+        state.slots.trackingNumber = extracted;
       }
       if (toolDef.pathParams?.includes('trackingNumber') && !state.slots.trackingNumber) {
-        const trackWf = Object.values(pack.workflows).find((w) => w.id.includes('track'));
+        const trackWf =
+          (intentDef.workflowId && pack.workflows[intentDef.workflowId]) ||
+          Object.values(pack.workflows).find((w) => w.id.includes('track'));
         if (trackWf) {
           const started = this.svc.workflow.start(trackWf);
           state.workflow = started.progress;
           state.phase = 'collecting';
+          state.activeIntent = detected.intent;
           return this.finish(pack, input, session.sessionId, state, {
             message: started.message,
             source: 'workflow',
@@ -215,9 +304,37 @@ export class ConversationPipeline {
     }
 
     // Knowledge / conversational / fallback
+    const knowledgeTurn = await this.answerFromKnowledgePath(pack, input, session, state, {
+      intent: detected.intent,
+      confidence: detected.confidence,
+    });
+    if (knowledgeTurn) return knowledgeTurn;
+
+    return this.finish(pack, input, session.sessionId, state, {
+      message:
+        "I don't have enough information in the knowledge base to answer that confidently. Would you like me to connect you with a human agent?",
+      source: 'fallback',
+      intent: detected.intent,
+      confidence: 0.2,
+      actions: DEFAULT_ACTIONS,
+    });
+  }
+
+  private async answerFromKnowledgePath(
+    pack: TenantPack,
+    input: TurnInput,
+    session: { sessionId: string; messages: Array<{ role: string; content: string }> },
+    state: ConversationState,
+    detected: { intent: string; confidence: number },
+  ): Promise<TurnResponse | null> {
+    const agent = this.svc.config.getAgent(pack, input.agentId);
+    if (!agent) return null;
+
     const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4);
+    if (!hits.length) return null;
+
     const history: LlmMessage[] = session.messages.slice(-8).map((m) => ({
-      role: m.role === 'system' ? 'system' : m.role,
+      role: (m.role === 'system' || m.role === 'assistant' ? m.role : 'user') as LlmMessage['role'],
       content: m.content,
     }));
     const llmMessages = this.svc.prompt.compose({
@@ -230,6 +347,8 @@ export class ConversationPipeline {
     });
 
     const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages);
+    if (answer.source === 'fallback') return null;
+
     state.activeIntent = detected.intent;
     state.phase = 'ready';
 
@@ -240,8 +359,6 @@ export class ConversationPipeline {
     }
 
     let message = answer.message;
-    let escalate = false;
-    let escalationId: string | undefined;
 
     const escLate = this.svc.escalation.detect({
       message: input.message,
@@ -265,8 +382,6 @@ export class ConversationPipeline {
       confidence: answer.confidence,
       actions: DEFAULT_ACTIONS,
       citations: answer.citations,
-      escalate,
-      escalationId,
     });
   }
 

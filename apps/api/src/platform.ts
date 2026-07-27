@@ -20,17 +20,20 @@ import {
 } from '@agent-platform/engines';
 import { ConversationPipeline, publicActionsForTenant } from '@agent-platform/application';
 
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
 
+// Prefer repo-root .env (monorepo), then cwd — npm workspace may run with apps/api as cwd.
+dotenv.config({ path: path.join(repoRoot, '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
 export function createPlatform() {
+  // Resolve relative paths from repo root — npm workspace cwd is often apps/api.
   const tenantsDir = process.env.TENANTS_DIR
-    ? path.resolve(process.cwd(), process.env.TENANTS_DIR)
+    ? path.resolve(repoRoot, process.env.TENANTS_DIR)
     : path.join(repoRoot, 'tenants');
   const dataDir = process.env.DATA_DIR
-    ? path.resolve(process.cwd(), process.env.DATA_DIR)
+    ? path.resolve(repoRoot, process.env.DATA_DIR)
     : path.join(repoRoot, 'data');
 
   const config = new ConfigEngine(tenantsDir);
