@@ -19,6 +19,52 @@ export interface VectorSearchPort {
   search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]>;
 }
 
+const STOP = new Set([
+  'the', 'and', 'for', 'are', 'you', 'your', 'with', 'from', 'that', 'this',
+  'what', 'when', 'where', 'which', 'who', 'how', 'can', 'does', 'do', 'is',
+  'a', 'an', 'to', 'of', 'in', 'on', 'my', 'me', 'we', 'our', 'please', 'tell',
+  'about', 'any', 'also', 'just', 'like', 'need', 'want', 'know', 'get', 'got',
+]);
+
+/** Domain synonyms so paraphrased questions still hit the right FAQ. */
+const SYNONYM_GROUPS: string[][] = [
+  ['cost', 'price', 'pricing', 'rate', 'rates', 'fee', 'fees', 'charge', 'charges', 'expensive', 'cheap'],
+  ['quote', 'quotation', 'estimate', 'pricing'],
+  ['ship', 'shipping', 'shipment', 'cargo', 'freight', 'consignment', 'send', 'sending', 'transport'],
+  ['track', 'tracking', 'locate', 'status', 'follow', 'whereabouts'],
+  ['contact', 'phone', 'email', 'call', 'reach', 'telephone', 'whatsapp', 'number'],
+  ['location', 'located', 'address', 'office', 'hq', 'headquarters', 'based', 'where'],
+  ['service', 'services', 'offer', 'offers', 'provide', 'provides', 'offering', 'help'],
+  ['destination', 'destinations', 'country', 'countries', 'route', 'routes', 'worldwide', 'international'],
+  ['document', 'documents', 'documentation', 'paperwork', 'papers', 'invoice', 'packing'],
+  ['vehicle', 'car', 'cars', 'auto', 'automobile', 'motorcycle', 'bike', 'suv', 'truck'],
+  ['container', 'fcl', 'lcl', 'groupage', 'consolidation', 'ocean', 'sea'],
+  ['air', 'airplane', 'aircraft', 'airport', 'awb'],
+  ['customs', 'clearance', 'duty', 'duties', 'import', 'export'],
+  ['parcel', 'package', 'packages', 'courier', 'express', 'box'],
+  ['warehouse', 'warehousing', 'storage', 'store'],
+  ['insurance', 'insured', 'cover', 'coverage'],
+  ['time', 'duration', 'transit', 'delay', 'days', 'weeks', 'eta', 'delivery'],
+  ['book', 'booking', 'reserve', 'order', 'arrange'],
+  ['business', 'company', 'commercial', 'corporate', 'individual', 'personal'],
+  ['africa', 'cameroon', 'togo', 'gabon', 'senegal', 'ghana', 'nigeria', 'congo'],
+  ['canada', 'montreal', 'halifax', 'toronto', 'moncton'],
+  ['payment', 'pay', 'paid', 'online', 'card'],
+  ['app', 'mobile', 'application'],
+];
+
+const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
+
+function buildSynonymMap(groups: string[][]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const group of groups) {
+    for (const word of group) {
+      map.set(word, group.filter((w) => w !== word));
+    }
+  }
+  return map;
+}
+
 function jaccard(a: string[], b: string[]): number {
   if (!a.length || !b.length) return 0;
   const setB = new Set(b);
@@ -28,66 +74,16 @@ function jaccard(a: string[], b: string[]): number {
   return union ? inter / union : 0;
 }
 
-const STOP = new Set([
-  'the', 'and', 'for', 'are', 'you', 'your', 'with', 'from', 'that', 'this',
-  'what', 'when', 'where', 'which', 'who', 'how', 'can', 'does', 'do', 'is',
-  'a', 'an', 'to', 'of', 'in', 'on', 'my', 'me', 'we', 'our', 'please', 'tell',
-]);
-
-/** Lexical MVP index; VectorSearchPort reserved for Phase 3 embeddings. */
-export class LexicalKnowledgeIndex implements VectorSearchPort {
-  private readonly byTenant = new Map<string, KnowledgeChunk[]>();
-
-  async upsert(tenantId: string, chunks: KnowledgeChunk[]): Promise<void> {
-    this.byTenant.set(tenantId, chunks);
-  }
-
-  async search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]> {
-    const chunks = this.byTenant.get(tenantId) ?? [];
-    const qTokens = tokenize(query).filter((t) => !STOP.has(t));
-    if (!qTokens.length || !chunks.length) return [];
-    const qNorm = normalizeQuestion(query);
-
-    const scored = chunks
-      .map((chunk) => {
-        let score = 0;
-        for (const t of qTokens) {
-          if (chunk.tokens.includes(t)) score += 1.2;
-        }
-        const qLower = query.toLowerCase();
-        if (chunk.title.toLowerCase().includes(qLower)) score += 2;
-        if (chunk.heading.toLowerCase().includes(qLower)) score += 1.5;
-
-        if (chunk.kind === 'qa' && chunk.question) {
-          const qToks = tokenize(chunk.question).filter((t) => !STOP.has(t));
-          score += jaccard(qTokens, qToks) * 14;
-          const qn = normalizeQuestion(chunk.question);
-          if (qn === qNorm) score += 25;
-          else if (qn.includes(qNorm) || qNorm.includes(qn)) score += 12;
-          // Token overlap on question alone (strong signal for FAQ paraphrase)
-          let qOverlap = 0;
-          for (const t of qTokens) if (qToks.includes(t)) qOverlap += 1;
-          score += qOverlap * 1.5;
-        }
-
-        return { chunk, score };
-      })
-      .filter((x) => x.score >= 2.5)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-
-    if (!scored.length) return [];
-
-    const max = scored[0]?.score ?? 1;
-    return scored.map(({ chunk, score }) => ({
-      id: chunk.id,
-      title: chunk.title,
-      heading: chunk.heading,
-      content: chunk.content,
-      score,
-      confidence: Math.min(0.99, 0.45 + (score / max) * 0.5),
-    }));
-  }
+/** Light stemmer for English logistics vocabulary (no external deps). */
+export function stem(token: string): string {
+  let t = token.toLowerCase();
+  if (t.length <= 3) return t;
+  if (t.endsWith('ies') && t.length > 4) t = `${t.slice(0, -3)}y`;
+  else if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
+  else if (t.endsWith('ed') && t.length > 4) t = t.slice(0, -2);
+  else if (t.endsWith('es') && t.length > 4) t = t.slice(0, -2);
+  else if (t.endsWith('s') && !t.endsWith('ss') && t.length > 3) t = t.slice(0, -1);
+  return t;
 }
 
 export function tokenize(text: string): string[] {
@@ -95,7 +91,25 @@ export function tokenize(text: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length > 2 && !STOP.has(t))
+    .map(stem);
+}
+
+function expandTokens(tokens: string[]): string[] {
+  const out = new Set(tokens);
+  for (const t of tokens) {
+    const syns = SYNONYM_MAP.get(t);
+    if (syns) for (const s of syns) out.add(stem(s));
+  }
+  return [...out];
+}
+
+function bigrams(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    out.push(`${tokens[i]} ${tokens[i + 1]}`);
+  }
+  return out;
 }
 
 function normalizeQuestion(text: string): string {
@@ -105,6 +119,111 @@ function normalizeQuestion(text: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function tokenSet(tokens: string[]): Set<string> {
+  return new Set(tokens);
+}
+
+/** Lexical MVP index with synonym + stem matching for paraphrased questions. */
+export class LexicalKnowledgeIndex implements VectorSearchPort {
+  private readonly byTenant = new Map<string, KnowledgeChunk[]>();
+
+  async upsert(tenantId: string, chunks: KnowledgeChunk[]): Promise<void> {
+    this.byTenant.set(tenantId, chunks);
+  }
+
+  async search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]> {
+    const chunks = this.byTenant.get(tenantId) ?? [];
+    const rawTokens = tokenize(query);
+    if (!rawTokens.length || !chunks.length) return [];
+
+    const qNorm = normalizeQuestion(query);
+    const qBigrams = bigrams(rawTokens);
+
+    const scored = chunks
+      .map((chunk) => {
+        let score = 0;
+        const isQa = chunk.kind === 'qa' && Boolean(chunk.question);
+        const questionExact = isQa ? tokenize(chunk.question!) : [];
+        const questionExactSet = tokenSet(questionExact);
+        const questionExpandedSet = tokenSet(isQa ? expandTokens(questionExact) : []);
+        const bodySet = tokenSet(chunk.tokens);
+
+        // Exact user tokens in the FAQ question (strongest signal)
+        let exactQHits = 0;
+        for (const t of rawTokens) {
+          if (questionExactSet.has(t)) {
+            exactQHits += 1;
+            score += 5;
+          }
+        }
+
+        // Synonym / body overlap (weaker)
+        for (const t of rawTokens) {
+          if (questionExactSet.has(t)) continue;
+          if (questionExpandedSet.has(t)) score += 1.2;
+          else if (bodySet.has(t)) score += isQa ? 0.25 : 1.0;
+        }
+
+        if (isQa) {
+          const qb = new Set(bigrams(questionExact));
+          for (const bg of qBigrams) if (qb.has(bg)) score += 4;
+
+          const qn = normalizeQuestion(chunk.question!);
+          if (qn === qNorm) score += 35;
+          else if (qNorm.length > 8 && (qn.includes(qNorm) || qNorm.includes(qn))) score += 16;
+          score += jaccard(rawTokens, questionExact) * 20;
+          if (rawTokens.length) score += (exactQHits / rawTokens.length) * 14;
+        }
+
+        const heading = (chunk.question || chunk.heading || '').toLowerCase();
+        if (/\b(phone|email|contact|call|whatsapp|number)\b/.test(qNorm) && /\b(contact|phone|email|call|reach)\b/.test(heading)) {
+          score += 12;
+        }
+        if (/\b(office|located|location|address|based|hq)\b/.test(qNorm) && /\b(located|location|address|office|moncton|brunswick)\b/.test(heading)) {
+          score += 12;
+        }
+        if (/\b(offer|offers|services|provide|helps)\b/.test(qNorm) && /\b(main services|what services|services does)\b/.test(heading)) {
+          score += 14;
+        }
+        if (/\b(about|who is|acocam)\b/.test(qNorm) && /\b(who is acocam|about acocam|mission)\b/.test(heading)) {
+          score += 12;
+        }
+        if (/\b(car|cars|vehicle|motorcycle|auto)\b/.test(qNorm) && /\b(vehicle|car|motorcycle)\b/.test(heading)) {
+          score += 10;
+        }
+        if (/\b(lcl|groupage|consolidation)\b/.test(qNorm) && /\b(lcl|groupage|consolidation)\b/.test(heading)) {
+          score += 18;
+        }
+        if (/\b(fcl|full container)\b/.test(qNorm) && /\b(fcl|full container)\b/.test(heading)) {
+          score += 18;
+        }
+
+        // Prefer substantive FAQ questions over tiny ones like "Call me."
+        if (isQa && questionExact.length <= 1) score -= exactQHits > 0 ? 4 : 10;
+
+        return { chunk, score };
+      })
+      .filter((x) => x.score >= 2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(limit, 8));
+
+    if (!scored.length) return [];
+
+    const max = scored[0]?.score ?? 1;
+    const minKeep = Math.max(2, max * 0.35);
+    const kept = scored.filter((x) => x.score >= minKeep).slice(0, limit);
+
+    return kept.map(({ chunk, score }) => ({
+      id: chunk.id,
+      title: chunk.title,
+      heading: chunk.heading,
+      content: chunk.content,
+      score,
+      confidence: Math.min(0.99, 0.42 + (score / max) * 0.55),
+    }));
+  }
 }
 
 /** Extract discrete Qn / answer pairs from ACOCAM-style knowledge markdown. */
@@ -147,7 +266,6 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
   const chunks: KnowledgeChunk[] = [];
   let title = fileName.replace(/\.md$/i, '');
 
-  // Prefer discrete Q&A chunks so every catalog question is answerable.
   for (const pair of extractQaPairs(md)) {
     const content = `Q: ${pair.question}\n\nA: ${pair.answer}`;
     const id = createHash('sha1')
@@ -160,7 +278,7 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
       title,
       heading: pair.question,
       content: content.slice(0, 4000),
-      tokens: tokenize(`${pair.question} ${pair.answer}`),
+      tokens: expandTokens(tokenize(`${pair.question} ${pair.answer}`)),
       kind: 'qa',
       question: pair.question,
     });
@@ -176,7 +294,6 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
     const content = section.trim();
     if (content.length < 80) continue;
 
-    // Skip pure Q&A sections already covered as pairs (heuristic).
     if (/^Q\d+\./m.test(content) && extractQaPairs(content).length > 0) {
       continue;
     }
@@ -197,7 +314,7 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
         title,
         heading: idx === 0 ? heading : `${heading} (cont.)`,
         content: piece.slice(0, 4000),
-        tokens: tokenize(piece),
+        tokens: expandTokens(tokenize(piece)),
         kind: 'section',
       });
     });

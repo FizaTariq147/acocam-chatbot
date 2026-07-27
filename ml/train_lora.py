@@ -6,14 +6,17 @@ LoRA supervised fine-tune on ACOCAM Q&A using transformers Trainer
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 from pathlib import Path
 
 import torch
+from accelerate import init_empty_weights, load_checkpoint_and_dispatch
 from datasets import load_dataset
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
@@ -29,6 +32,56 @@ from model_config import (  # noqa: E402
     resolve_repo_path,
 )
 
+PAGE_FILE_HELP = """
+Windows memory error (1455): your page file (virtual memory) is too small to load the model.
+
+Fix (required on 8GB RAM machines):
+  1. Close Chrome/browsers and other heavy apps
+  2. Win+R → sysdm.cpl → Advanced → Performance Settings → Advanced
+  3. Virtual memory → Change → uncheck automatic
+  4. Custom size: Initial 16384 MB, Maximum 40960 MB → Set → OK → Reboot
+
+Then retry with:
+  python ml\\train_pipeline.py --train-only --cpu --small --epochs 2 --ultra-low-mem
+"""
+
+
+def load_model_cpu_minimal(
+    model_id: str,
+    offload_folder: Path,
+    dtype: torch.dtype,
+    max_cpu: str = "2GiB",
+) -> AutoModelForCausalLM:
+    """
+    Load without allocating the full weight tensor in RAM at once.
+    Uses empty weights + checkpoint dispatch (critical on Windows 8GB).
+    """
+    offload_folder.mkdir(parents=True, exist_ok=True)
+    print(f"Low-memory load: max_cpu={max_cpu}, offload={offload_folder}")
+
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+    with init_empty_weights():
+        model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+
+    max_memory = {"cpu": max_cpu, "disk": "100GiB"}
+
+    try:
+        model = load_checkpoint_and_dispatch(
+            model,
+            model_id,
+            device_map="auto",
+            max_memory=max_memory,
+            offload_folder=str(offload_folder),
+            dtype=dtype,
+            no_split_module_classes=getattr(model, "_no_split_modules", None),
+        )
+    except OSError as err:
+        if getattr(err, "winerror", None) == 1455 or "paging file" in str(err).lower():
+            raise SystemExit(PAGE_FILE_HELP) from err
+        raise
+
+    return model
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune ACOCAM LoRA adapter on Q&A dataset")
@@ -40,7 +93,36 @@ def main() -> None:
     parser.add_argument("--grad-accum", type=int, default=8)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-seq-length", type=int, default=768)
+    parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--cpu", action="store_true", help="Force CPU training")
+    parser.add_argument(
+        "--cpu-dtype",
+        type=str,
+        default="fp16",
+        help="CPU precision: fp16 (lowest RAM) or bf16 or fp32.",
+    )
+    parser.add_argument(
+        "--cpu-offload",
+        action="store_true",
+        help="Low-memory load via accelerate checkpoint dispatch (recommended on CPU).",
+    )
+    parser.add_argument(
+        "--ultra-low-mem",
+        action="store_true",
+        help="Aggressive RAM savings: fp16, 2GiB cap, LoRA r=8, enables cpu-offload.",
+    )
+    parser.add_argument(
+        "--cpu-max-memory",
+        type=str,
+        default="2GiB",
+        help="Max RAM for model weights during load/train (rest on disk).",
+    )
+    parser.add_argument(
+        "--offload-folder",
+        type=Path,
+        default=Path("ml/models/acocam-lora/offload"),
+        help="Folder for disk-offloaded weights.",
+    )
     parser.add_argument(
         "--small",
         action="store_true",
@@ -51,8 +133,18 @@ def main() -> None:
     if args.small:
         args.base_model = "Qwen/Qwen2.5-0.5B-Instruct"
 
+    if args.ultra_low_mem:
+        args.cpu_offload = True
+        args.cpu_dtype = "fp16"
+        args.cpu_max_memory = "1.5GiB"
+        args.lora_r = min(args.lora_r, 8)
+        if args.max_seq_length > 256:
+            args.max_seq_length = 256
+        args.grad_accum = min(args.grad_accum, 4)
+
     data_path = resolve_repo_path(args.data)
     out_path = resolve_repo_path(args.out)
+    offload_path = resolve_repo_path(args.offload_folder)
 
     print(f"Training base model: {args.base_model}")
     print(f"Dataset: {data_path}")
@@ -68,30 +160,54 @@ def main() -> None:
 
     use_cpu = args.cpu or not torch.cuda.is_available()
     if use_cpu:
-        print("Device: CPU (expect slow training; use --epochs 2 --small if needed)")
+        print("Device: CPU (slow; close browsers to free RAM)")
+        gc.collect()
     else:
         print(f"Device: CUDA ({torch.cuda.get_device_name(0)})")
 
-    device_map = "cpu" if use_cpu else "auto"
-
+    gc.collect()
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base_model,
-        trust_remote_code=True,
-        torch_dtype=torch.float32 if use_cpu else "auto",
-        device_map=device_map,
-        low_cpu_mem_usage=True,
+    cpu_dtype = args.cpu_dtype.lower().strip()
+    if use_cpu and cpu_dtype not in {"bf16", "fp16", "fp32"}:
+        raise SystemExit("--cpu-dtype must be one of: bf16, fp16, fp32")
+
+    torch_dtype = (
+        torch.float32
+        if not use_cpu or cpu_dtype == "fp32"
+        else (torch.bfloat16 if cpu_dtype == "bf16" else torch.float16)
     )
+
+    try:
+        if use_cpu and args.cpu_offload:
+            model = load_model_cpu_minimal(
+                args.base_model,
+                offload_path,
+                torch_dtype,
+                max_cpu=args.cpu_max_memory,
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.base_model,
+                trust_remote_code=True,
+                torch_dtype=torch_dtype if use_cpu else "auto",
+                device_map="auto" if not use_cpu else "cpu",
+                low_cpu_mem_usage=True,
+            )
+    except OSError as err:
+        if getattr(err, "winerror", None) == 1455 or "paging file" in str(err).lower():
+            raise SystemExit(PAGE_FILE_HELP) from err
+        raise
+
     model.config.use_cache = False
 
     peft_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
-        r=16,
-        lora_alpha=32,
+        r=args.lora_r,
+        lora_alpha=args.lora_r * 2,
         lora_dropout=0.05,
         bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
@@ -127,13 +243,17 @@ def main() -> None:
         learning_rate=args.lr,
         logging_steps=10,
         save_strategy="epoch",
-        bf16=False,
-        fp16=False,
+        bf16=use_cpu and cpu_dtype == "bf16",
+        fp16=use_cpu and cpu_dtype == "fp16",
         report_to=[],
         remove_unused_columns=False,
         use_cpu=use_cpu,
         dataloader_pin_memory=not use_cpu,
+        gradient_checkpointing=use_cpu,
     )
+
+    if use_cpu and hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
@@ -159,12 +279,15 @@ def main() -> None:
         "grad_accum": args.grad_accum,
         "lr": args.lr,
         "max_seq_length": args.max_seq_length,
+        "lora_r": args.lora_r,
+        "cpu_offload": args.cpu_offload,
+        "cpu_max_memory": args.cpu_max_memory,
         "device": "cpu" if use_cpu else "cuda",
         "trainer": "transformers.Trainer",
     }
     (out_path / "train_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print("Training complete:", out_path)
-    print("Next: python ml/serve.py")
+    print("Next: python ml/serve.py --cpu --small")
 
 
 if __name__ == "__main__":

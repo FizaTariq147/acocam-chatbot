@@ -12,7 +12,7 @@ DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 FALLBACK_BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 DEFAULT_ADAPTER_DIR = "ml/models/acocam-lora"
 DEFAULT_DATASET = "ml/data/acocam_sft.jsonl"
-DEFAULT_KB_DIR = "knowledge base"
+DEFAULT_KB_DIR = "tenants/acocam/knowledge"
 DEFAULT_MERGED_KNOWLEDGE = "tenants/acocam/knowledge/knowledge-qa.md"
 SERVED_MODEL_NAME = "acocam-lora"
 
