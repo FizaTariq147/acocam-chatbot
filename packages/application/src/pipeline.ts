@@ -140,7 +140,6 @@ function loginActions(portal: PortalUrls): ActionButton[] {
   return [
     ...authButtons,
     quotePortalAction(portal),
-    { id: 'quote.request', label: 'Get a quote in chat' },
     { id: 'support.human', label: 'Talk to human' },
   ];
 }

@@ -31,29 +31,54 @@ type TurnResponse = {
   const key = script.getAttribute('data-key') || '';
   const apiBase = (script.getAttribute('data-api') || '/v1').replace(/\/$/, '');
 
+  function parseStoredToken(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed) as Record<string, unknown>;
+        for (const field of ['token', 'accessToken', 'access_token', 'jwt', 'authToken']) {
+          const value = obj[field];
+          if (typeof value === 'string' && value.trim()) return value.trim();
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
+      } catch {
+        /* fall through */
+      }
+    }
+    return trimmed;
+  }
+
+  function readTokenFromStorage(keyName: string): string {
+    const raw = localStorage.getItem(keyName) || sessionStorage.getItem(keyName);
+    return raw ? parseStoredToken(raw) : '';
+  }
+
   function resolveCustomerToken(): string {
     const fromAttr = script!.getAttribute('data-customer-token')?.trim();
     if (fromAttr) return fromAttr;
 
     const storageKey = script!.getAttribute('data-customer-token-key')?.trim();
     if (storageKey) {
-      const stored =
-        localStorage.getItem(storageKey) ||
-        sessionStorage.getItem(storageKey) ||
-        '';
+      const stored = readTokenFromStorage(storageKey);
       if (stored) return stored;
     }
 
     for (const keyName of ['token', 'authToken', 'accessToken', 'access_token', 'jwt']) {
-      const stored = localStorage.getItem(keyName) || sessionStorage.getItem(keyName);
-      if (stored?.trim()) return stored.trim();
+      const stored = readTokenFromStorage(keyName);
+      if (stored) return stored;
     }
 
     const globalToken = (window as { ACOCAM_AUTH_TOKEN?: string }).ACOCAM_AUTH_TOKEN;
     return typeof globalToken === 'string' ? globalToken.trim() : '';
   }
-
-  const customerToken = resolveCustomerToken();
 
   let sessionId: string | null = null;
   let config: PublicConfig | null = null;
@@ -213,7 +238,8 @@ type TurnResponse = {
       message: text || '',
     };
     if (actionId) payload.actionId = actionId;
-    if (customerToken) payload.customerAuthToken = customerToken;
+    const token = resolveCustomerToken();
+    if (token) payload.customerAuthToken = token;
     return JSON.stringify(payload);
   }
 
