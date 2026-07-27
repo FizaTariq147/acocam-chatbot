@@ -1,0 +1,32 @@
+{
+  "id": "create_quotation",
+  "label": "Create quotation",
+  "method": "POST",
+  "path": "/api/quotations",
+  "baseUrlEnv": "ACOCAM_API_BASE_URL",
+  "requireAuth": true,
+  "bodyFrom": {
+    "shipper": {
+      "name": "contact_name",
+      "email": "contact_email",
+      "phone": "contact_phone",
+      "address": "origin",
+      "city": "origin",
+      "country": "origin_country"
+    },
+    "consignee": {
+      "name": "consignee_name",
+      "email": "contact_email",
+      "phone": "contact_phone",
+      "address": "destination",
+      "city": "destination",
+      "country": "destination_country"
+    },
+    "shipment": {
+      "cargoDescription": "cargo",
+      "weightOrCbm": "weight",
+      "origin": "origin",
+      "destination": "destination"
+    }
+  }
+}

@@ -15,6 +15,9 @@ import {
   PromptEngine,
   ToolEngine,
   WorkflowEngine,
+  loginPrompt,
+  profileToWorkflowSlots,
+  type PortalUrls,
   type TenantPack,
 } from '@agent-platform/engines';
 
@@ -99,6 +102,61 @@ function looksLikeTransactional(message: string): boolean {
   );
 }
 
+function getPortalUrls(pack: TenantPack, env: NodeJS.ProcessEnv): PortalUrls {
+  return {
+    loginUrl:
+      pack.settings.portal?.loginUrl ??
+      env.ACOCAM_PORTAL_LOGIN_URL ??
+      'https://acocamtrading.ca/login',
+    signupUrl:
+      pack.settings.portal?.signupUrl ??
+      pack.settings.portal?.loginUrl ??
+      env.ACOCAM_PORTAL_SIGNUP_URL ??
+      env.ACOCAM_PORTAL_LOGIN_URL ??
+      'https://acocamtrading.ca/login',
+    quoteUrl:
+      pack.settings.portal?.quoteUrl ??
+      env.ACOCAM_PORTAL_QUOTE_URL ??
+      'https://acocamtrading.ca/get-quote/',
+  };
+}
+
+function quotePortalAction(portal: PortalUrls): ActionButton {
+  return {
+    id: 'portal.quote',
+    label: 'Get a quote online',
+    url: portal.quoteUrl ?? 'https://acocamtrading.ca/get-quote/',
+  };
+}
+
+function loginActions(portal: PortalUrls): ActionButton[] {
+  const sameAuthUrl = portal.signupUrl === portal.loginUrl;
+  const authButtons: ActionButton[] = sameAuthUrl
+    ? [{ id: 'portal.login', label: 'Log in / Create account', url: portal.loginUrl }]
+    : [
+        { id: 'portal.login', label: 'Log in', url: portal.loginUrl },
+        { id: 'portal.signup', label: 'Create account', url: portal.signupUrl },
+      ];
+  return [
+    ...authButtons,
+    quotePortalAction(portal),
+    { id: 'support.human', label: 'Talk to human' },
+  ];
+}
+
+function toolContext(
+  pack: TenantPack,
+  svc: PlatformServices,
+  input: TurnInput,
+  slots?: Record<string, string>,
+) {
+  return {
+    env: svc.env,
+    customerAuthToken: input.customerAuthToken,
+    slots,
+    portal: getPortalUrls(pack, svc.env),
+  };
+}
 function refusesSensitive(message: string, patterns: string[]): string | null {
   const lower = message.toLowerCase();
   for (const p of patterns) {
@@ -171,12 +229,10 @@ export class ConversationPipeline {
           if (advanced.progress.status === 'complete' && def.onComplete?.action === 'tool' && def.onComplete.toolId) {
             const toolDef = pack.tools[def.onComplete.toolId];
             if (toolDef) {
-              const toolResult = await this.svc.tool.execute(toolDef, {
-                env: this.svc.env,
-                customerAuthToken: input.customerAuthToken,
-                slots: state.slots,
-              });
-              const toolMsg = this.svc.tool.formatResult(toolDef, toolResult, state.slots);
+              const ctx = toolContext(pack, this.svc, input, state.slots);
+              const toolResult = await this.svc.tool.execute(toolDef, ctx);
+              const toolMsg = this.svc.tool.formatResult(toolDef, toolResult, ctx);
+              const portal = getPortalUrls(pack, this.svc.env);
               state.workflow = null;
               state.activeIntent = def.intent;
               return this.finish(pack, input, session.sessionId, state, {
@@ -184,7 +240,7 @@ export class ConversationPipeline {
                 source: 'workflow+tool',
                 intent: def.intent,
                 confidence: 0.9,
-                actions: DEFAULT_ACTIONS,
+                actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
               });
             }
           }
@@ -248,22 +304,21 @@ export class ConversationPipeline {
 
     if (detected.handler === 'workflow' && intentDef?.workflowId && pack.workflows[intentDef.workflowId]) {
       const def = pack.workflows[intentDef.workflowId]!;
-      const started = this.svc.workflow.start(def);
-      state.workflow = started.progress;
-      state.activeIntent = detected.intent;
-      state.phase = 'collecting';
-      state.awaitingSlot = def.steps[0]?.id ?? null;
-      return this.finish(pack, input, session.sessionId, state, {
-        message: started.message,
-        source: 'workflow',
-        intent: detected.intent,
-        confidence: detected.confidence,
-        actions: [{ id: 'cancel', label: 'Cancel' }],
-      });
+      return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
     }
 
     if (detected.handler === 'tool' && intentDef?.toolId && pack.tools[intentDef.toolId]) {
       const toolDef = pack.tools[intentDef.toolId]!;
+      if (toolDef.requireAuth && !input.customerAuthToken) {
+        const portal = getPortalUrls(pack, this.svc.env);
+        return this.finish(pack, input, session.sessionId, state, {
+          message: loginPrompt(portal),
+          source: 'auth',
+          intent: detected.intent,
+          confidence: detected.confidence,
+          actions: loginActions(portal),
+        });
+      }
       const extracted = extractTrackingNumber(input.message);
       if (extracted && !state.slots.trackingNumber) {
         state.slots.trackingNumber = extracted;
@@ -273,34 +328,30 @@ export class ConversationPipeline {
           (intentDef.workflowId && pack.workflows[intentDef.workflowId]) ||
           Object.values(pack.workflows).find((w) => w.id.includes('track'));
         if (trackWf) {
-          const started = this.svc.workflow.start(trackWf);
-          state.workflow = started.progress;
-          state.phase = 'collecting';
-          state.activeIntent = detected.intent;
-          return this.finish(pack, input, session.sessionId, state, {
-            message: started.message,
-            source: 'workflow',
-            intent: detected.intent,
-            confidence: detected.confidence,
-            actions: [{ id: 'cancel', label: 'Cancel' }],
-          });
+          return this.startWorkflow(
+            pack,
+            input,
+            session.sessionId,
+            state,
+            trackWf,
+            detected.intent,
+            detected.confidence,
+          );
         }
       }
-      const toolResult = await this.svc.tool.execute(toolDef, {
-        env: this.svc.env,
-        customerAuthToken: input.customerAuthToken,
-        slots: state.slots,
-      });
+      const ctx = toolContext(pack, this.svc, input, state.slots);
+      const toolResult = await this.svc.tool.execute(toolDef, ctx);
       state.activeIntent = detected.intent;
       state.phase = 'ready';
       if (!toolResult.ok && !toolResult.authRequired) state.failureStreak += 1;
       else state.failureStreak = 0;
+      const portal = getPortalUrls(pack, this.svc.env);
       return this.finish(pack, input, session.sessionId, state, {
-        message: this.svc.tool.formatResult(toolDef, toolResult, state.slots),
+        message: this.svc.tool.formatResult(toolDef, toolResult, ctx),
         source: 'tool',
         intent: detected.intent,
         confidence: detected.confidence,
-        actions: DEFAULT_ACTIONS,
+        actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
       });
     }
 
@@ -383,6 +434,93 @@ export class ConversationPipeline {
       confidence: answer.confidence,
       actions: DEFAULT_ACTIONS,
       citations: answer.citations,
+    });
+  }
+
+  private async resolveCustomerProfile(
+    pack: TenantPack,
+    input: TurnInput,
+  ): Promise<{ slots: Record<string, string>; authRequired: boolean }> {
+    if (!input.customerAuthToken) return { slots: {}, authRequired: false };
+    const profileTool = pack.tools['get_profile'];
+    if (!profileTool) return { slots: {}, authRequired: false };
+
+    const result = await this.svc.tool.execute(profileTool, toolContext(pack, this.svc, input));
+    if (result.authRequired || result.httpStatus === 401 || result.httpStatus === 403) {
+      return { slots: {}, authRequired: true };
+    }
+    if (!result.ok) return { slots: {}, authRequired: false };
+    return { slots: profileToWorkflowSlots(result.data), authRequired: false };
+  }
+
+  private async startWorkflow(
+    pack: TenantPack,
+    input: TurnInput,
+    sessionId: string,
+    state: ConversationState,
+    def: NonNullable<TenantPack['workflows'][string]>,
+    intent: string,
+    confidence: number,
+  ): Promise<TurnResponse> {
+    const portal = getPortalUrls(pack, this.svc.env);
+    if (def.requireAuth && !input.customerAuthToken) {
+      return this.finish(pack, input, sessionId, state, {
+        message: loginPrompt(portal),
+        source: 'auth',
+        intent,
+        confidence,
+        actions: loginActions(portal),
+      });
+    }
+
+    let prefill = { ...state.slots };
+    if (def.requireAuth && input.customerAuthToken) {
+      const profile = await this.resolveCustomerProfile(pack, input);
+      if (profile.authRequired) {
+        return this.finish(pack, input, sessionId, state, {
+          message: loginPrompt(portal),
+          source: 'auth',
+          intent,
+          confidence,
+          actions: loginActions(portal),
+        });
+      }
+      prefill = { ...prefill, ...profile.slots };
+    }
+
+    const started = this.svc.workflow.startWithPrefill(def, prefill);
+    state.workflow = started.progress;
+    state.activeIntent = intent;
+    state.phase = started.progress.status === 'complete' ? 'ready' : 'collecting';
+    state.awaitingSlot =
+      started.progress.status === 'complete'
+        ? null
+        : (def.steps[started.progress.stepIndex]?.id ?? null);
+    Object.assign(state.slots, started.progress.data);
+
+    if (started.progress.status === 'complete' && def.onComplete?.action === 'tool' && def.onComplete.toolId) {
+      const toolDef = pack.tools[def.onComplete.toolId];
+      if (toolDef) {
+        const ctx = toolContext(pack, this.svc, input, state.slots);
+        const toolResult = await this.svc.tool.execute(toolDef, ctx);
+        const toolMsg = this.svc.tool.formatResult(toolDef, toolResult, ctx);
+        state.workflow = null;
+        return this.finish(pack, input, sessionId, state, {
+          message: `${started.message}\n\n${toolMsg}`,
+          source: 'workflow+tool',
+          intent,
+          confidence: 0.9,
+          actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
+        });
+      }
+    }
+
+    return this.finish(pack, input, sessionId, state, {
+      message: started.message,
+      source: 'workflow',
+      intent,
+      confidence,
+      actions: [{ id: 'cancel', label: 'Cancel' }],
     });
   }
 
@@ -493,6 +631,23 @@ export class ConversationPipeline {
   }
 }
 
-export function publicActionsForTenant(_pack: TenantPack): ActionButton[] {
-  return DEFAULT_ACTIONS;
+export function publicActionsForTenant(
+  pack: TenantPack,
+  env: NodeJS.ProcessEnv = process.env,
+): ActionButton[] {
+  const portal = getPortalUrls(pack, env);
+  const sameAuthUrl = portal.signupUrl === portal.loginUrl;
+  const authButtons: ActionButton[] = sameAuthUrl
+    ? [{ id: 'portal.login', label: 'Log in / Create account', url: portal.loginUrl }]
+    : [
+        { id: 'portal.login', label: 'Log in', url: portal.loginUrl },
+        { id: 'portal.signup', label: 'Sign up', url: portal.signupUrl },
+      ];
+  return [
+    { id: 'quote.request', label: 'Get a quote' },
+    { id: 'shipment.track', label: 'Track shipment' },
+    ...authButtons,
+    quotePortalAction(portal),
+    { id: 'support.human', label: 'Talk to human' },
+  ];
 }

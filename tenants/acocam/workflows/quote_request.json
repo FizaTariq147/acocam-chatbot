@@ -2,15 +2,29 @@
   "id": "quote_request",
   "intent": "quote.request",
   "label": "Quote request",
-  "intro": "I can help prepare a quote request. Quotes are subject to ACOCAM review — I will never invent a price.",
+  "requireAuth": true,
+  "intro": "I can submit a quotation request to your ACOCAM account. Quotes are subject to review — I will never invent a price.",
   "steps": [
-    { "id": "origin", "prompt": "What is the origin city/country?", "required": true, "validator": "text" },
-    { "id": "destination", "prompt": "What is the destination city/country?", "required": true, "validator": "text" },
+    { "id": "contact_name", "prompt": "What is your full name?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "What email is on your ACOCAM account?", "required": true, "validator": "email" },
+    { "id": "contact_phone", "prompt": "What is the best phone number?", "required": true, "validator": "phone" },
+    {
+      "id": "origin",
+      "prompt": "Origin city and country (e.g. Montreal, Canada)?",
+      "required": true,
+      "validator": "text",
+      "help": "Used as shipper location."
+    },
+    {
+      "id": "destination",
+      "prompt": "Destination city and country (e.g. Douala, Cameroon)?",
+      "required": true,
+      "validator": "text",
+      "help": "Used as consignee location."
+    },
     { "id": "cargo", "prompt": "Briefly describe the cargo / commodity.", "required": true, "validator": "text" },
-    { "id": "weight", "prompt": "Approximate total weight (kg) or CBM?", "required": true, "validator": "text" },
-    { "id": "contact_email", "prompt": "What email should we use for follow-up?", "required": true, "validator": "email" },
-    { "id": "contact_phone", "prompt": "What is the best phone number?", "required": true, "validator": "phone" }
+    { "id": "weight", "prompt": "Approximate total weight (kg) or CBM?", "required": true, "validator": "text" }
   ],
-  "completionMessage": "Thank you. Your quote request details have been collected. An ACOCAM specialist will review and follow up — no price has been confirmed in chat.",
-  "onComplete": { "action": "escalation" }
+  "completionMessage": "Submitting your quotation request to ACOCAM…",
+  "onComplete": { "action": "tool", "toolId": "create_quotation" }
 }

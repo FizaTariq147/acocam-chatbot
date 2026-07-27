@@ -2,6 +2,7 @@
   "id": "ocean_fcl",
   "intent": "ocean.fcl",
   "label": "Ocean FCL",
+  "requireAuth": true,
   "intro": "Let's collect details for a full-container (FCL) ocean request.",
   "steps": [
     { "id": "origin", "prompt": "Origin port/city?", "required": true, "validator": "text" },

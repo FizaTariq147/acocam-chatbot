@@ -2,6 +2,7 @@
   "id": "air_freight",
   "intent": "air.freight",
   "label": "Air freight",
+  "requireAuth": true,
   "intro": "Air freight requests need exact commodity and measurements. Batteries/liquids must be disclosed.",
   "steps": [
     { "id": "commodity", "prompt": "Exact commodity description?", "required": true, "validator": "text" },

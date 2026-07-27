@@ -2,6 +2,7 @@
   "id": "ocean_lcl",
   "intent": "ocean.lcl",
   "label": "Ocean LCL",
+  "requireAuth": true,
   "intro": "Let's collect details for ocean groupage / LCL.",
   "steps": [
     { "id": "packages", "prompt": "How many packages?", "required": true, "validator": "text" },
