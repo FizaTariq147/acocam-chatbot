@@ -116,9 +116,25 @@ export class AiEngine {
 
     // Strong KB hit → answer from knowledge directly (fast + accurate for FAQ).
     // Local model is only used for weaker paraphrases.
-    const strongHit = top.score >= 8 || top.confidence >= 0.85;
+    const strongHit = top.score >= 5 || top.confidence >= 0.8;
 
-    if (!useLocalModel || !llmMessages || strongHit) {
+    const normalizeForCompare = (text: string): string => {
+      return text
+        .toLowerCase()
+        .replace(/^q\d+\.\s*/i, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const userNorm = normalizeForCompare(userMessage);
+    const topNorm = normalizeForCompare(top.heading || top.title || '');
+    const exactQuestionMatch = Boolean(userNorm && topNorm && userNorm === topNorm);
+
+    // If the user phrasing exactly matches the stored FAQ question, return the
+    // KB answer verbatim (most reliable). Otherwise, use the local model so it
+    // can rephrase while staying grounded in the retrieved knowledge hits.
+    if (!useLocalModel || !llmMessages || (strongHit && exactQuestionMatch)) {
       const primary = formatHitAnswer(top);
       const extras = hits
         .slice(1, 2)

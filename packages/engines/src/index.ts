@@ -24,7 +24,14 @@ export {
   type AiProvider,
 } from './ai.js';
 export { WorkflowEngine } from './workflow.js';
-export { ToolEngine, type ToolRuntimeContext, type PortalUrls, loginPrompt, profileToWorkflowSlots } from './tool.js';
+export {
+  ToolEngine,
+  summarizeTracking,
+  type ToolRuntimeContext,
+  type PortalUrls,
+  loginPrompt,
+  profileToWorkflowSlots,
+} from './tool.js';
 export { EscalationEngine, type EscalationTicket } from './escalation.js';
 export { AnalyticsEngine, type AnalyticsEvent } from './analytics.js';
 export { RateLimiter } from './rate-limit.js';

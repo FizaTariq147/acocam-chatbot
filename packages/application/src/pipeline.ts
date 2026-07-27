@@ -58,12 +58,13 @@ const TRACKING_STOPWORDS = new Set(
     'individual', 'business', 'customer', 'customer', 'destination', 'destinations',
     'quotation', 'quotations', 'acocam', 'trading', 'canada', 'africa', 'vehicle',
     'motorcycle', 'personal', 'effects', 'commercial', 'support', 'customer',
+    
   ].map((w) => w.toLowerCase()),
 );
 
 /** Strict tracking refs: ACO-#### or alphanumeric tokens that contain a digit. */
 const TRACKING_REF_RE =
-  /\b(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)(?![A-Z]*$)[A-Z0-9-]{8,})\b/gi;
+  /\b(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)(?![A-Z]*$)[A-Z0-9-]{6,})\b/gi;
 
 function extractTrackingNumber(message: string): string | undefined {
   const matches = message.match(TRACKING_REF_RE) ?? [];
@@ -71,7 +72,7 @@ function extractTrackingNumber(message: string): string | undefined {
     const cleaned = raw.replace(/\s+/g, '').toUpperCase();
     if (TRACKING_STOPWORDS.has(cleaned.toLowerCase())) continue;
     if (!/\d/.test(cleaned)) continue;
-    if (cleaned.length < 6) continue;
+    if (cleaned.length < 5) continue;
     return cleaned;
   }
   return undefined;
