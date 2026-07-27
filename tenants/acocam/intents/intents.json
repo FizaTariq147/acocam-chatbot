@@ -1,11 +1,63 @@
 {
   "intents": [
     {
+      "code": "support.human",
+      "label": "Speak with an agent",
+      "priority": 100,
+      "phrases": [
+        "speak with an agent",
+        "talk to human",
+        "human agent",
+        "customer service",
+        "talk to a person",
+        "real person"
+      ],
+      "keywords": ["human agent", "live agent", "representative"],
+      "handler": "escalation",
+      "workflowId": "human_escalation"
+    },
+    {
+      "code": "shipment.track",
+      "label": "Track a shipment",
+      "priority": 95,
+      "phrases": [
+        "track a shipment",
+        "track my shipment",
+        "track shipment",
+        "track now",
+        "where is my shipment",
+        "tracking status",
+        "track my package",
+        "track my cargo",
+        "shipment status"
+      ],
+      "keywords": ["track", "tracking"],
+      "patterns": [
+        "\\bACO[- ]?\\d{4,}\\b",
+        "\\b(?=[A-Z0-9-]*\\d)[A-Z0-9-]{10,}\\b"
+      ],
+      "handler": "tool",
+      "toolId": "track_shipment",
+      "workflowId": "tracking"
+    },
+    {
       "code": "quote.request",
       "label": "Request a quote",
       "priority": 90,
-      "phrases": ["request a quote", "get a quote", "need a quotation", "price estimate"],
-      "keywords": ["quote", "quotation", "pricing", "estimate"],
+      "phrases": [
+        "request a quote",
+        "get a quote",
+        "get quote",
+        "need a quotation",
+        "price estimate",
+        "book a shipment",
+        "book shipment",
+        "book now",
+        "i want to ship",
+        "ship something",
+        "start a booking"
+      ],
+      "keywords": ["quote", "quotation", "booking"],
       "handler": "workflow",
       "workflowId": "quote_request"
     },
@@ -13,8 +65,15 @@
       "code": "ocean.fcl",
       "label": "Ocean FCL",
       "priority": 80,
-      "phrases": ["full container", "fcl", "20ft", "40ft", "book a container"],
-      "keywords": ["fcl", "container", "ocean"],
+      "phrases": [
+        "book a container",
+        "book fcl",
+        "full container load",
+        "ship a full container",
+        "20ft container",
+        "40ft container"
+      ],
+      "keywords": ["fcl booking", "full container"],
       "handler": "workflow",
       "workflowId": "ocean_fcl"
     },
@@ -22,8 +81,13 @@
       "code": "ocean.lcl",
       "label": "Ocean LCL",
       "priority": 78,
-      "phrases": ["lcl", "groupage", "shared container"],
-      "keywords": ["lcl", "groupage"],
+      "phrases": [
+        "book lcl",
+        "ship lcl",
+        "groupage booking",
+        "shared container booking"
+      ],
+      "keywords": ["lcl booking", "groupage booking"],
       "handler": "workflow",
       "workflowId": "ocean_lcl"
     },
@@ -31,8 +95,13 @@
       "code": "air.freight",
       "label": "Air freight",
       "priority": 80,
-      "phrases": ["air freight", "air cargo", "ship by air"],
-      "keywords": ["air", "airport", "awb"],
+      "phrases": [
+        "book air freight",
+        "ship by air",
+        "air cargo booking",
+        "send by air"
+      ],
+      "keywords": ["air freight booking", "air cargo booking"],
       "handler": "workflow",
       "workflowId": "air_freight"
     },
@@ -40,28 +109,38 @@
       "code": "vehicle.ship",
       "label": "Vehicle shipping",
       "priority": 80,
-      "phrases": ["ship a vehicle", "ship my car", "motorcycle shipping", "vehicle shipping"],
-      "keywords": ["vehicle", "car", "motorcycle", "vin"],
+      "phrases": [
+        "ship a vehicle",
+        "ship my car",
+        "ship my motorcycle",
+        "vehicle shipping",
+        "car shipping",
+        "motorcycle shipping"
+      ],
+      "keywords": ["vehicle shipping", "car shipping", "ship my car"],
       "handler": "workflow",
       "workflowId": "vehicle"
     },
     {
-      "code": "shipment.track",
-      "label": "Track a shipment",
-      "priority": 95,
-      "phrases": ["track a shipment", "track my shipment", "where is my shipment", "tracking status"],
-      "keywords": ["track", "tracking", "status", "awb", "bol"],
-      "patterns": ["[A-Z0-9-]{8,}"],
-      "handler": "tool",
-      "toolId": "track_shipment",
-      "workflowId": "tracking"
+      "code": "parcel.express",
+      "label": "Parcel / express",
+      "priority": 75,
+      "phrases": [
+        "ship a parcel",
+        "send a package",
+        "express courier",
+        "ship a package"
+      ],
+      "keywords": ["ship parcel", "send package", "express courier"],
+      "handler": "workflow",
+      "workflowId": "quote_request"
     },
     {
       "code": "shipment.list",
       "label": "List my shipments",
       "priority": 70,
-      "phrases": ["my shipments", "list shipments", "show shipments"],
-      "keywords": ["shipments", "orders"],
+      "phrases": ["my shipments", "list shipments", "show shipments", "shipment history"],
+      "keywords": ["my shipments", "shipment history"],
       "handler": "tool",
       "toolId": "list_shipments"
     },
@@ -69,8 +148,8 @@
       "code": "quotation.list",
       "label": "List my quotations",
       "priority": 70,
-      "phrases": ["my quotations", "list quotes", "quote status"],
-      "keywords": ["quotations", "quotes"],
+      "phrases": ["my quotations", "list quotes", "quote status", "my quotes"],
+      "keywords": ["my quotations", "my quotes"],
       "handler": "tool",
       "toolId": "list_quotations"
     },
@@ -79,35 +158,46 @@
       "label": "My profile",
       "priority": 60,
       "phrases": ["my profile", "account details", "my account"],
-      "keywords": ["profile", "account"],
+      "keywords": ["my profile", "my account"],
       "handler": "tool",
       "toolId": "get_profile"
     },
     {
-      "code": "support.human",
-      "label": "Speak with an agent",
-      "priority": 100,
-      "phrases": ["speak with an agent", "talk to human", "human agent", "customer service"],
-      "keywords": ["human", "agent", "representative"],
-      "handler": "escalation",
-      "workflowId": "human_escalation"
-    },
-    {
       "code": "company.about",
       "label": "About ACOCAM",
-      "priority": 40,
-      "phrases": ["who is acocam", "about acocam", "where are you located", "do you ship worldwide"],
-      "keywords": ["acocam", "company", "services", "destination", "africa"],
+      "priority": 55,
+      "phrases": [
+        "who is acocam",
+        "about acocam",
+        "where are you located",
+        "do you ship worldwide",
+        "what services",
+        "main services",
+        "contact acocam",
+        "phone number",
+        "email address",
+        "how much does shipping cost",
+        "what documents",
+        "destinations",
+        "vehicle shipping services",
+        "online booking",
+        "mobile app"
+      ],
+      "keywords": [
+        "acocam",
+        "company",
+        "services",
+        "destination",
+        "africa",
+        "canada",
+        "customs",
+        "documents",
+        "contact",
+        "hours",
+        "insurance",
+        "warehouse"
+      ],
       "handler": "knowledge"
-    },
-    {
-      "code": "parcel.express",
-      "label": "Parcel / express",
-      "priority": 75,
-      "phrases": ["ship a parcel", "express courier", "send a package"],
-      "keywords": ["parcel", "package", "courier", "express"],
-      "handler": "workflow",
-      "workflowId": "quote_request"
     },
     {
       "code": "fallback.unknown",

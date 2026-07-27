@@ -88,7 +88,7 @@ type TurnResponse = {
       `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
       {
         method: 'POST',
-        body: JSON.stringify({ message: text || actionId, actionId }),
+        body: JSON.stringify({ message: text || '', actionId }),
       },
     );
     if (log) appendBubble(log, 'assistant', result.message);
@@ -127,7 +127,24 @@ type TurnResponse = {
         cfg.actions.map((a) => {
           const btn = el('button', { type: 'button' }, [a.label]);
           btn.addEventListener('click', () => {
-            void sendMessage(a.label, a.id, log);
+            // Send actionId with empty message so button labels are never
+            // mistaken for tracking numbers or FAQ text.
+            void (async () => {
+              try {
+                await ensureSession();
+                appendBubble(log, 'user', a.label);
+                const result = await api<TurnResponse>(
+                  `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
+                  {
+                    method: 'POST',
+                    body: JSON.stringify({ message: '', actionId: a.id }),
+                  },
+                );
+                appendBubble(log, 'assistant', result.message);
+              } catch (err) {
+                appendBubble(log, 'assistant', err instanceof Error ? err.message : 'Request failed');
+              }
+            })();
           });
           return btn;
         }),

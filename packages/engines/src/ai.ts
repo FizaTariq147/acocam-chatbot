@@ -26,11 +26,14 @@ export class OpenAiCompatibleProvider implements AiProvider {
     private readonly baseUrl: string,
     private readonly model: string,
     name = 'openai-compatible',
+    private readonly timeoutMs = 12_000,
   ) {
     this.name = name;
   }
 
   async complete(messages: LlmMessage[]): Promise<LlmResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -46,6 +49,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
           temperature: 0.2,
           max_tokens: 700,
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         return { ok: false, content: '', provider: this.name, error: `HTTP ${res.status}` };
@@ -56,12 +60,19 @@ export class OpenAiCompatibleProvider implements AiProvider {
       const content = data.choices?.[0]?.message?.content?.trim() ?? '';
       return { ok: Boolean(content), content, provider: this.name };
     } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError';
       return {
         ok: false,
         content: '',
         provider: this.name,
-        error: err instanceof Error ? err.message : 'LLM request failed',
+        error: aborted
+          ? `LLM timed out after ${this.timeoutMs}ms`
+          : err instanceof Error
+            ? err.message
+            : 'LLM request failed',
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -103,17 +114,21 @@ export class AiEngine {
       this.provider.name === 'local-finetuned' ||
       this.provider.name === 'openai-compatible';
 
-    if (!useLocalModel || !llmMessages) {
+    // Strong KB hit → answer from knowledge directly (fast + accurate for FAQ).
+    // Local model is only used for weaker paraphrases.
+    const strongHit = top.score >= 8 || top.confidence >= 0.85;
+
+    if (!useLocalModel || !llmMessages || strongHit) {
       const primary = formatHitAnswer(top);
       const extras = hits
         .slice(1, 2)
         .map((h) => formatHitAnswer(h))
         .filter((a) => a && a !== primary && a.length < 600);
-      let message = primary.slice(0, 1200);
+      let message = primary.slice(0, 1500);
       if (extras.length && primary.length < 400) {
         message = `${message}\n\n${extras[0]!.slice(0, 500)}`;
       }
-      if (message.length >= 1200) message += '…';
+      if (message.length >= 1500) message += '…';
       return {
         message,
         source: 'knowledge',

@@ -28,6 +28,12 @@ function jaccard(a: string[], b: string[]): number {
   return union ? inter / union : 0;
 }
 
+const STOP = new Set([
+  'the', 'and', 'for', 'are', 'you', 'your', 'with', 'from', 'that', 'this',
+  'what', 'when', 'where', 'which', 'who', 'how', 'can', 'does', 'do', 'is',
+  'a', 'an', 'to', 'of', 'in', 'on', 'my', 'me', 'we', 'our', 'please', 'tell',
+]);
+
 /** Lexical MVP index; VectorSearchPort reserved for Phase 3 embeddings. */
 export class LexicalKnowledgeIndex implements VectorSearchPort {
   private readonly byTenant = new Map<string, KnowledgeChunk[]>();
@@ -38,7 +44,7 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
 
   async search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]> {
     const chunks = this.byTenant.get(tenantId) ?? [];
-    const qTokens = tokenize(query);
+    const qTokens = tokenize(query).filter((t) => !STOP.has(t));
     if (!qTokens.length || !chunks.length) return [];
     const qNorm = normalizeQuestion(query);
 
@@ -46,24 +52,31 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
       .map((chunk) => {
         let score = 0;
         for (const t of qTokens) {
-          if (chunk.tokens.includes(t)) score += 1;
+          if (chunk.tokens.includes(t)) score += 1.2;
         }
-        if (chunk.title.toLowerCase().includes(query.toLowerCase())) score += 2;
-        if (chunk.heading.toLowerCase().includes(query.toLowerCase())) score += 1.5;
+        const qLower = query.toLowerCase();
+        if (chunk.title.toLowerCase().includes(qLower)) score += 2;
+        if (chunk.heading.toLowerCase().includes(qLower)) score += 1.5;
 
         if (chunk.kind === 'qa' && chunk.question) {
-          const qToks = tokenize(chunk.question);
-          score += jaccard(qTokens, qToks) * 12;
+          const qToks = tokenize(chunk.question).filter((t) => !STOP.has(t));
+          score += jaccard(qTokens, qToks) * 14;
           const qn = normalizeQuestion(chunk.question);
-          if (qn === qNorm) score += 20;
-          else if (qn.includes(qNorm) || qNorm.includes(qn)) score += 10;
+          if (qn === qNorm) score += 25;
+          else if (qn.includes(qNorm) || qNorm.includes(qn)) score += 12;
+          // Token overlap on question alone (strong signal for FAQ paraphrase)
+          let qOverlap = 0;
+          for (const t of qTokens) if (qToks.includes(t)) qOverlap += 1;
+          score += qOverlap * 1.5;
         }
 
         return { chunk, score };
       })
-      .filter((x) => x.score > 0)
+      .filter((x) => x.score >= 2.5)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+
+    if (!scored.length) return [];
 
     const max = scored[0]?.score ?? 1;
     return scored.map(({ chunk, score }) => ({
@@ -72,7 +85,7 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
       heading: chunk.heading,
       content: chunk.content,
       score,
-      confidence: Math.min(0.99, 0.4 + (score / max) * 0.55),
+      confidence: Math.min(0.99, 0.45 + (score / max) * 0.5),
     }));
   }
 }
@@ -236,6 +249,16 @@ async function listMarkdown(dir: string): Promise<string[]> {
     }
   } catch {
     /* missing dir */
+  }
+  // Prefer merged Q&A corpus to avoid duplicating knowledge-base.md, but still
+  // index supplemental files (e.g. website-faq.md).
+  const merged = out.filter((f) => path.basename(f).toLowerCase() === 'knowledge-qa.md');
+  if (merged.length) {
+    const extras = out.filter((f) => {
+      const name = path.basename(f).toLowerCase();
+      return name !== 'knowledge-qa.md' && name !== 'knowledge-base.md';
+    });
+    return [...merged, ...extras];
   }
   return out;
 }
