@@ -15,6 +15,7 @@ import {
   PromptEngine,
   ToolEngine,
   WorkflowEngine,
+  acocamHumanFallback,
   loginPrompt,
   profileToWorkflowSlots,
   type PortalUrls,
@@ -80,11 +81,49 @@ function extractTrackingNumber(message: string): string | undefined {
 
 function looksLikeFaqQuestion(message: string): boolean {
   const m = message.trim().toLowerCase();
-  if (!m || m.length < 3) return false;
+  if (!m || m.length < 2) return false;
   if (m.includes('?')) return true;
-  return /^(what|who|where|when|why|how|do you|does|can you|can i|is |are |which|tell me|explain|please tell)\b/.test(
+  return /^(what|who|where|when|why|how|do you|does|can you|can i|is |are |which|tell me|explain|please tell|i (have a|need a) question)\b/.test(
     m,
   );
+}
+
+function looksLikeGreeting(message: string): boolean {
+  const m = message.trim().toLowerCase().replace(/[!.,]+$/g, '');
+  if (!m || m.length > 80) return false;
+  return /^(hi|hello|hey|hola|bonjour|good\s*(morning|afternoon|evening|day)|greetings|howdy|yo|salam|assalamu\s*alaikum|hiya|helo|hii+|helloo+)\b/.test(
+    m,
+  );
+}
+
+function looksLikeThanksOrBye(message: string): boolean {
+  const m = message.trim().toLowerCase().replace(/[!.,]+$/g, '');
+  return /^(thanks|thank you|thx|ty|bye|goodbye|see you|ok thanks|that('|’)s all|nothing else)\b/.test(m);
+}
+
+/** Short answers that look like workflow slot fills (name, email, phone, city). */
+function looksLikeSlotFill(message: string): boolean {
+  const m = message.trim();
+  if (!m || m.includes('?')) return false;
+  if (looksLikeGreeting(m) || looksLikeFaqQuestion(m) || looksLikeThanksOrBye(m)) return false;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m)) return true;
+  if (/^\+?[\d\s().-]{7,}$/.test(m)) return true;
+  // short plain text / "City, Country" — typical slot replies
+  if (m.length <= 80 && !/\b(track|quote|book|ship|lcl|fcl|customs|price|cost|office|contact)\b/i.test(m)) {
+    return true;
+  }
+  return false;
+}
+
+function looksLikeTopicChange(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  if (!m) return false;
+  if (looksLikeGreeting(m) || looksLikeThanksOrBye(m) || looksLikeFaqQuestion(m)) return true;
+  if (/\b(actually|instead|by the way|btw|different (question|topic)|change (the )?topic|never ?mind|cancel)\b/.test(m)) {
+    return true;
+  }
+  if (extractTrackingNumber(message)) return true;
+  return looksLikeTransactional(m);
 }
 
 function looksLikeTransactional(message: string): boolean {
@@ -198,16 +237,15 @@ export class ConversationPipeline {
     }
 
     // Active workflow continues until complete/cancelled — unless the user
-    // clearly switches to a different transactional intent (e.g. book while tracking).
-    if (state.workflow?.status === 'active') {
-      const switchIntent =
-        !input.actionId &&
-        looksLikeTransactional(input.message) &&
-        !extractTrackingNumber(input.message);
-      if (switchIntent) {
+    // greets, asks a FAQ, or clearly switches topic (not a slot fill).
+    if (state.workflow?.status === 'active' && !input.actionId) {
+      const topicChange =
+        looksLikeTopicChange(input.message) && !looksLikeSlotFill(input.message);
+      if (topicChange) {
         state.workflow = null;
         state.phase = 'idle';
         state.awaitingSlot = null;
+        state.activeIntent = null;
       }
     }
 
@@ -272,13 +310,20 @@ export class ConversationPipeline {
     const detected = this.svc.intent.detect(input.message, pack.intents, input.actionId);
     const intentDef = this.svc.intent.find(pack.intents, detected.intent);
 
-    // FAQ-style questions should hit the knowledge base first (unless user
+    // FAQ / greetings / thanks should hit the knowledge base first (unless user
     // clicked an action button or clearly asked to book/track).
     const preferKnowledge =
       !input.actionId &&
-      looksLikeFaqQuestion(input.message) &&
+      (looksLikeFaqQuestion(input.message) ||
+        looksLikeGreeting(input.message) ||
+        looksLikeThanksOrBye(input.message)) &&
       !looksLikeTransactional(input.message) &&
-      (detected.handler === 'workflow' || detected.handler === 'tool');
+      (detected.handler === 'workflow' ||
+        detected.handler === 'tool' ||
+        detected.handler === 'fallback' ||
+        detected.handler === 'knowledge' ||
+        looksLikeGreeting(input.message) ||
+        looksLikeThanksOrBye(input.message));
 
     if (preferKnowledge) {
       const faqAnswer = await this.answerFromKnowledgePath(pack, input, session, state, {
@@ -355,7 +400,7 @@ export class ConversationPipeline {
       });
     }
 
-    // Knowledge / conversational / fallback
+    // Knowledge / conversational / fallback — always give a helpful ACOCAM reply
     const knowledgeTurn = await this.answerFromKnowledgePath(pack, input, session, state, {
       intent: detected.intent,
       confidence: detected.confidence,
@@ -363,11 +408,10 @@ export class ConversationPipeline {
     if (knowledgeTurn) return knowledgeTurn;
 
     return this.finish(pack, input, session.sessionId, state, {
-      message:
-        "I don't have enough information in the knowledge base to answer that confidently. Would you like me to connect you with a human agent?",
-      source: 'fallback',
+      message: acocamHumanFallback(input.message),
+      source: 'assistant',
       intent: detected.intent,
-      confidence: 0.2,
+      confidence: 0.6,
       actions: DEFAULT_ACTIONS,
     });
   }
@@ -383,7 +427,6 @@ export class ConversationPipeline {
     if (!agent) return null;
 
     const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4);
-    if (!hits.length) return null;
 
     const history: LlmMessage[] = session.messages.slice(-8).map((m) => ({
       role: (m.role === 'system' || m.role === 'assistant' ? m.role : 'user') as LlmMessage['role'],
@@ -399,12 +442,11 @@ export class ConversationPipeline {
     });
 
     const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages);
-    if (answer.source === 'fallback') return null;
 
     state.activeIntent = detected.intent;
     state.phase = 'ready';
 
-    if (answer.confidence < agent.confidenceThreshold || answer.source === 'fallback') {
+    if (answer.confidence < agent.confidenceThreshold) {
       state.failureStreak += 1;
     } else {
       state.failureStreak = 0;

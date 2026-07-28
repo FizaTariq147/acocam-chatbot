@@ -1,4 +1,5 @@
 import type { KnowledgeHit, LlmMessage, LlmResult } from '@agent-platform/domain';
+import { acocamHumanFallback, humanizeRetrievedAnswer } from './response-style.js';
 
 export interface AiProvider {
   readonly name: string;
@@ -12,7 +13,7 @@ export class NullAiProvider implements AiProvider {
     const user = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
     return {
       ok: true,
-      content: `I can help with that based on our knowledge base. You asked: "${user.slice(0, 120)}"`,
+      content: acocamHumanFallback(user),
       provider: this.name,
     };
   }
@@ -99,10 +100,9 @@ export class AiEngine {
   }> {
     if (!hits.length) {
       return {
-        message:
-          "I don't have enough information in the knowledge base to answer that confidently. Would you like me to connect you with a human agent?",
-        source: 'fallback',
-        confidence: 0.2,
+        message: acocamHumanFallback(userMessage),
+        source: 'assistant',
+        confidence: 0.62,
         citations: [],
       };
     }
@@ -132,8 +132,7 @@ export class AiEngine {
     const exactQuestionMatch = Boolean(userNorm && topNorm && userNorm === topNorm);
 
     // If the user phrasing exactly matches the stored FAQ question, return the
-    // KB answer verbatim (most reliable). Otherwise, use the local model so it
-    // can rephrase while staying grounded in the retrieved knowledge hits.
+    // KB answer (most reliable). Otherwise humanize slightly for a natural feel.
     if (!useLocalModel || !llmMessages || (strongHit && exactQuestionMatch)) {
       const primary = formatHitAnswer(top);
       const extras = hits
@@ -145,10 +144,13 @@ export class AiEngine {
         message = `${message}\n\n${extras[0]!.slice(0, 500)}`;
       }
       if (message.length >= 1500) message += '…';
+      if (!exactQuestionMatch) {
+        message = humanizeRetrievedAnswer(message, userMessage);
+      }
       return {
         message,
         source: 'knowledge',
-        confidence: top.confidence,
+        confidence: Math.max(top.confidence, strongHit ? 0.75 : 0.55),
         citations,
       };
     }
@@ -156,7 +158,7 @@ export class AiEngine {
     const result = await this.provider.complete(llmMessages);
     if (!result.ok || !result.content) {
       return {
-        message: formatHitAnswer(top).slice(0, 1200),
+        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage),
         source: 'knowledge',
         confidence: top.confidence,
         citations,

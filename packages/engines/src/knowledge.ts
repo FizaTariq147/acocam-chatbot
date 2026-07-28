@@ -135,10 +135,50 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
 
   async search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]> {
     const chunks = this.byTenant.get(tenantId) ?? [];
-    const rawTokens = tokenize(query);
-    if (!rawTokens.length || !chunks.length) return [];
+    if (!chunks.length) return [];
 
     const qNorm = normalizeQuestion(query);
+    // Exact FAQ match first — needed for greetings like "hi" / "how are you"
+    // where tokenize() drops short words and stopwords.
+    if (qNorm) {
+      const exactHits = chunks
+        .filter((c) => c.kind === 'qa' && c.question && normalizeQuestion(c.question) === qNorm)
+        .map((chunk) => ({
+          id: chunk.id,
+          title: chunk.title,
+          heading: chunk.heading,
+          content: chunk.content,
+          score: 200,
+          confidence: 0.99,
+        }));
+      if (exactHits.length) return exactHits.slice(0, limit);
+    }
+
+    const rawTokens = tokenize(query);
+    if (!rawTokens.length) {
+      // Soft fallback: match short queries that only contain stopwords / 1–2 letter words
+      const soft = chunks
+        .filter((c) => c.kind === 'qa' && c.question)
+        .map((chunk) => {
+          const qn = normalizeQuestion(chunk.question!);
+          let score = 0;
+          if (qn === qNorm) score = 100;
+          else if (qNorm.length >= 2 && (qn.startsWith(qNorm) || qNorm.startsWith(qn))) score = 40;
+          return { chunk, score };
+        })
+        .filter((x) => x.score >= 40)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+      return soft.map(({ chunk, score }) => ({
+        id: chunk.id,
+        title: chunk.title,
+        heading: chunk.heading,
+        content: chunk.content,
+        score,
+        confidence: Math.min(0.99, 0.7 + score / 200),
+      }));
+    }
+
     const qBigrams = bigrams(rawTokens);
 
     const scored = chunks
@@ -171,10 +211,14 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
           for (const bg of qBigrams) if (qb.has(bg)) score += 4;
 
           const qn = normalizeQuestion(chunk.question!);
-          if (qn === qNorm) score += 35;
+          const exactQuestion = qn === qNorm;
+          if (exactQuestion) score += 35;
           else if (qNorm.length > 8 && (qn.includes(qNorm) || qNorm.includes(qn))) score += 16;
           score += jaccard(rawTokens, questionExact) * 20;
           if (rawTokens.length) score += (exactQHits / rawTokens.length) * 14;
+
+          // Short greetings / basics: exact match must win over longer FAQs
+          if (exactQuestion && questionExact.length <= 3) score += 25;
         }
 
         const heading = (chunk.question || chunk.heading || '').toLowerCase();
@@ -199,13 +243,20 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
         if (/\b(fcl|full container)\b/.test(qNorm) && /\b(fcl|full container)\b/.test(heading)) {
           score += 18;
         }
+        if (/^(hi|hello|hey|thanks|thank you|bye|goodbye|help)\b/.test(qNorm) && /^(hi|hello|hey|thanks|thank you|bye|goodbye|help)\b/.test(heading)) {
+          score += 22;
+        }
 
         // Prefer substantive FAQ questions over tiny ones like "Call me."
-        if (isQa && questionExact.length <= 1) score -= exactQHits > 0 ? 4 : 10;
+        // Do not penalize exact short greeting / basics matches.
+        if (isQa && questionExact.length <= 1) {
+          const qn = normalizeQuestion(chunk.question || '');
+          if (qn !== qNorm) score -= exactQHits > 0 ? 4 : 10;
+        }
 
         return { chunk, score };
       })
-      .filter((x) => x.score >= 2)
+        .filter((x) => x.score >= 1.5)
       .sort((a, b) => b.score - a.score)
       .slice(0, Math.max(limit, 8));
 
