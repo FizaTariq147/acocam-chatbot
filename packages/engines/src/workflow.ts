@@ -36,17 +36,43 @@ function validate(step: WorkflowStep, value: string): string | null {
 
 export class WorkflowEngine {
   start(def: WorkflowDefinition): { progress: WorkflowProgress; message: string } {
+    return this.startWithPrefill(def, {});
+  }
+
+  startWithPrefill(
+    def: WorkflowDefinition,
+    prefill: Record<string, string>,
+  ): { progress: WorkflowProgress; message: string } {
     const progress: WorkflowProgress = {
       workflowId: def.id,
       intent: def.intent,
       status: 'active',
       stepIndex: 0,
-      data: {},
+      data: { ...prefill },
       lastError: null,
     };
-    const first = def.steps[0];
-    const message = [def.intro, first?.prompt].filter(Boolean).join('\n\n');
-    return { progress, message };
+
+    while (progress.stepIndex < def.steps.length) {
+      const step = def.steps[progress.stepIndex]!;
+      const value = prefill[step.id]?.trim();
+      if (!value || validate(step, value)) break;
+      progress.data[step.id] = value;
+      progress.stepIndex += 1;
+    }
+
+    if (progress.stepIndex >= def.steps.length) {
+      progress.status = 'complete';
+      return { progress, message: def.completionMessage };
+    }
+
+    const lines: string[] = [];
+    if (def.intro) lines.push(def.intro);
+    const signedInAs = prefill.contact_name?.trim();
+    if (signedInAs) {
+      lines.push(`You're signed in as **${signedInAs}**. I'll use your account details where I can.`);
+    }
+    lines.push(def.steps[progress.stepIndex]!.prompt);
+    return { progress, message: lines.filter(Boolean).join('\n\n') };
   }
 
   advance(

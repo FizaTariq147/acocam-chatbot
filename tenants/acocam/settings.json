@@ -3,6 +3,11 @@
   "name": "ACOCAM Trading Inc.",
   "publishableKey": "pk_acocam_demo",
   "secretKey": "sk_acocam_demo_secret",
+  "portal": {
+    "loginUrl": "https://acocamtrading.ca/login",
+    "signupUrl": "https://acocamtrading.ca/login",
+    "quoteUrl": "https://acocamtrading.ca/get-quote/"
+  },
   "agents": [
     {
       "id": "customer-support",
