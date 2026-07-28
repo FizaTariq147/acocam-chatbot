@@ -219,6 +219,31 @@ async function main() {
     const pack = await platform.config.load('acocam');
     await platform.knowledge.reindexTenant('acocam', pack.knowledgeDir);
     app.log.info('ACOCAM knowledge indexed');
+
+    const apiBase =
+      process.env.ACOCAM_API_BASE_URL?.trim() ||
+      pack.settings.apiBaseUrl?.trim() ||
+      '';
+    if (!apiBase) {
+      app.log.warn(
+        'ACOCAM_API_BASE_URL is not set — tracking and quotation tools will fail until the logistics API URL is configured.',
+      );
+    } else {
+      const healthUrl = `${apiBase.replace(/\/$/, '')}/api/health`;
+      try {
+        const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          app.log.info({ healthUrl }, 'ACOCAM logistics API reachable');
+        } else {
+          app.log.warn({ healthUrl, status: res.status }, 'ACOCAM logistics API returned non-OK status');
+        }
+      } catch (err) {
+        app.log.warn(
+          { healthUrl, err: err instanceof Error ? err.message : err },
+          'ACOCAM logistics API unreachable — tracking will show connection errors until this is fixed',
+        );
+      }
+    }
   } catch (err) {
     app.log.warn({ err }, 'Boot reindex skipped');
   }

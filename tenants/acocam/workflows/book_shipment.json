@@ -1,0 +1,44 @@
+{
+  "id": "book_shipment",
+  "intent": "quote.request",
+  "label": "Book shipment",
+  "requireAuth": true,
+  "intro": "You're signed in — I can submit a **shipment booking** to your ACOCAM account using your saved profile.",
+  "steps": [
+    {
+      "id": "origin",
+      "prompt": "Origin city and country (e.g. Montreal, Canada)?",
+      "required": true,
+      "validator": "text",
+      "help": "Pickup / shipper location."
+    },
+    {
+      "id": "destination",
+      "prompt": "Destination city and country (e.g. Douala, Cameroon)?",
+      "required": true,
+      "validator": "text",
+      "help": "Delivery / consignee location."
+    },
+    {
+      "id": "consignee_name",
+      "prompt": "Receiver / consignee name (type **same** if you are the receiver)?",
+      "required": true,
+      "validator": "text",
+      "help": "Person or company receiving the cargo at destination."
+    },
+    {
+      "id": "cargo",
+      "prompt": "Briefly describe the cargo / commodity.",
+      "required": true,
+      "validator": "text"
+    },
+    {
+      "id": "weight",
+      "prompt": "Approximate total weight (kg) or CBM?",
+      "required": true,
+      "validator": "text"
+    }
+  ],
+  "completionMessage": "Submitting your shipment booking to ACOCAM…",
+  "onComplete": { "action": "tool", "toolId": "create_quotation" }
+}

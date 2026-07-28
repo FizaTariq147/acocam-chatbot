@@ -3,6 +3,7 @@
   "name": "ACOCAM Trading Inc.",
   "publishableKey": "pk_acocam_demo",
   "secretKey": "sk_acocam_demo_secret",
+  "apiBaseUrl": "https://mediumblue-jackal-717379.hostingersite.com",
   "portal": {
     "loginUrl": "https://acocamtrading.ca/login",
     "signupUrl": "https://acocamtrading.ca/login",

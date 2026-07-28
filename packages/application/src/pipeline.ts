@@ -44,11 +44,29 @@ export interface TurnInput {
   customerAuthToken?: string;
 }
 
-const DEFAULT_ACTIONS: ActionButton[] = [
-  { id: 'quote.request', label: 'Get a quote' },
-  { id: 'shipment.track', label: 'Track shipment' },
-  { id: 'support.human', label: 'Talk to human' },
-];
+
+function defaultActionsForUser(input: TurnInput): ActionButton[] {
+  return [
+    { id: 'quote.request', label: input.customerAuthToken ? 'Book shipment' : 'Get a quote' },
+    { id: 'shipment.track', label: 'Track shipment' },
+    { id: 'support.human', label: 'Talk to human' },
+  ];
+}
+
+function resolveWorkflow(
+  pack: TenantPack,
+  input: TurnInput,
+  workflowId: string,
+): NonNullable<TenantPack['workflows'][string]> | undefined {
+  if (
+    input.customerAuthToken &&
+    (workflowId === 'quote_request' || workflowId === 'book_shipment') &&
+    pack.workflows['book_shipment']
+  ) {
+    return pack.workflows['book_shipment'];
+  }
+  return pack.workflows[workflowId];
+}
 
 /** Common English words that must never be treated as tracking numbers. */
 const TRACKING_STOPWORDS = new Set(
@@ -102,6 +120,115 @@ function looksLikeTransactional(message: string): boolean {
   );
 }
 
+/** Short actionable words — route to intents, not the generic help prompt. */
+const SHORT_ACTION_WORDS = new Set(['ok', 'okay', 'no', 'yes', 'y', 'n', 'quote', 'track', 'ship']);
+
+/** Real short tokens — not random keyboard noise (SAA, ssaa, etc.). */
+const SHORT_ALLOWED_WORDS = new Set([
+  ...SHORT_ACTION_WORDS,
+  'fcl',
+  'lcl',
+  'awb',
+  'cbm',
+  'eta',
+  'bl',
+  'hbl',
+  'mbl',
+  'kg',
+  'lb',
+  'what',
+  'when',
+  'where',
+  'who',
+  'why',
+  'how',
+  'can',
+  'the',
+  'for',
+  'good',
+  'day',
+]);
+
+const KEYBOARD_MASH_RE =
+  /^(asdf|qwerty|qwertyuiop|zxcv|zxcvb|qwer|hjkl|jkl|fdsa|wasd|test|abc|xyz|xxx+|asdfgh|sdfgh|dfghj|fghjk|ghjkl)$/i;
+
+function vowelRatio(text: string): number {
+  const letters = text.replace(/[^a-zA-Z]/g, '');
+  if (!letters.length) return 0;
+  const vowels = (letters.match(/[aeiouAEIOU]/g) ?? []).length;
+  return vowels / letters.length;
+}
+
+function hasRepeatedLetterRuns(text: string): boolean {
+  return /(.)\1/.test(text.toLowerCase());
+}
+
+function tokenLooksLikeGibberish(token: string): boolean {
+  const t = token.trim();
+  if (!t) return true;
+  const lower = t.toLowerCase();
+  if (SHORT_ALLOWED_WORDS.has(lower)) return false;
+  if (extractTrackingNumber(t)) return false;
+  if (KEYBOARD_MASH_RE.test(lower)) return true;
+  if (/^(\d)\1+$/.test(t) || /^([a-zA-Z])\1{2,}$/.test(t)) return true;
+  if (/^\d+$/.test(t) && t.length < 6) return true;
+  const lettersOnly = /^[a-zA-Z]+$/.test(t);
+  if (lettersOnly && t.length >= 2 && t.length <= 5) {
+    if (vowelRatio(t) === 0) return true;
+    if (hasRepeatedLetterRuns(t)) return true;
+    if (t.length <= 4) return true;
+  }
+  if (lettersOnly && t.length <= 12 && vowelRatio(t) === 0) return true;
+  if (lettersOnly && t.length >= 6 && t.length <= 12 && vowelRatio(t) < 0.2) return true;
+  if (/^[a-zA-Z0-9]+$/.test(t) && t.length <= 8 && vowelRatio(t) === 0) return true;
+  return false;
+}
+
+function isNoiseMessage(message: string): boolean {
+  const m = message.trim();
+  if (!m) return true;
+  const lower = m.toLowerCase();
+  if (SHORT_ACTION_WORDS.has(lower)) return false;
+  if (extractTrackingNumber(m)) return false;
+  if (looksLikeFaqQuestion(m) || looksLikeTransactional(m)) return false;
+  if (!/[a-zA-Z0-9]/.test(m)) return true;
+
+  const tokens = m.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    return tokenLooksLikeGibberish(tokens[0]!);
+  }
+  if (tokens.length <= 4 && tokens.every(tokenLooksLikeGibberish)) {
+    return true;
+  }
+  return false;
+}
+
+const GREETING_RE =
+  /^(?:hi|hey|hello|hiya|yo|howdy|greetings|help|thanks|thank\s+you|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening)(?:\s+there)?[!?.…]*$/i;
+
+function isGreetingMessage(message: string): boolean {
+  const m = message.trim().replace(/[!?.…]+$/g, '').trim();
+  if (!m) return false;
+  if (extractTrackingNumber(m)) return false;
+  if (looksLikeTransactional(m) || looksLikeFaqQuestion(m)) return false;
+  return GREETING_RE.test(m);
+}
+
+function shouldShowHelpPrompt(message: string): boolean {
+  return isNoiseMessage(message) || isGreetingMessage(message);
+}
+
+function helpPromptMessage(input: TurnInput): string {
+  const bookOrQuote = input.customerAuthToken ? 'book a shipment' : 'get a quote';
+  return [
+    'How can I help you today?',
+    '',
+    `I can help you **${bookOrQuote}**, **track a shipment**, answer questions about ACOCAM services and destinations, or connect you with a human agent.`,
+    '',
+    'Choose an option below or type your question.',
+  ].join('\n');
+}
+
 function getPortalUrls(pack: TenantPack, env: NodeJS.ProcessEnv): PortalUrls {
   return {
     loginUrl:
@@ -152,6 +279,7 @@ function toolContext(
 ) {
   return {
     env: svc.env,
+    apiBaseUrl: pack.settings.apiBaseUrl,
     customerAuthToken: input.customerAuthToken,
     slots,
     portal: getPortalUrls(pack, svc.env),
@@ -193,7 +321,21 @@ export class ConversationPipeline {
         source: 'safety',
         intent: 'safety.refusal',
         confidence: 1,
-        actions: DEFAULT_ACTIONS,
+        actions: defaultActionsForUser(input),
+      });
+    }
+
+    if (
+      !input.actionId &&
+      state.workflow?.status !== 'active' &&
+      shouldShowHelpPrompt(input.message)
+    ) {
+      return this.finish(pack, input, session.sessionId, state, {
+        message: helpPromptMessage(input),
+        source: 'prompt',
+        intent: 'support.help',
+        confidence: 1,
+        actions: defaultActionsForUser(input),
       });
     }
 
@@ -240,7 +382,7 @@ export class ConversationPipeline {
                 source: 'workflow+tool',
                 intent: def.intent,
                 confidence: 0.9,
-                actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
+                actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
               });
             }
           }
@@ -253,7 +395,7 @@ export class ConversationPipeline {
             source: 'workflow',
             intent: def.intent,
             confidence: 0.9,
-            actions: DEFAULT_ACTIONS,
+            actions: defaultActionsForUser(input),
           });
         }
 
@@ -302,9 +444,11 @@ export class ConversationPipeline {
       return this.escalateNow(pack, input, session, state, escEarly.primaryReason);
     }
 
-    if (detected.handler === 'workflow' && intentDef?.workflowId && pack.workflows[intentDef.workflowId]) {
-      const def = pack.workflows[intentDef.workflowId]!;
-      return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
+    if (detected.handler === 'workflow' && intentDef?.workflowId) {
+      const def = resolveWorkflow(pack, input, intentDef.workflowId);
+      if (def) {
+        return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
+      }
     }
 
     if (detected.handler === 'tool' && intentDef?.toolId && pack.tools[intentDef.toolId]) {
@@ -351,7 +495,7 @@ export class ConversationPipeline {
         source: 'tool',
         intent: detected.intent,
         confidence: detected.confidence,
-        actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
+        actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
       });
     }
 
@@ -368,7 +512,7 @@ export class ConversationPipeline {
       source: 'fallback',
       intent: detected.intent,
       confidence: 0.2,
-      actions: DEFAULT_ACTIONS,
+      actions: defaultActionsForUser(input),
     });
   }
 
@@ -432,7 +576,7 @@ export class ConversationPipeline {
       source: answer.source,
       intent: detected.intent,
       confidence: answer.confidence,
-      actions: DEFAULT_ACTIONS,
+      actions: defaultActionsForUser(input),
       citations: answer.citations,
     });
   }
@@ -463,6 +607,9 @@ export class ConversationPipeline {
     confidence: number,
   ): Promise<TurnResponse> {
     const portal = getPortalUrls(pack, this.svc.env);
+    if (def.id === 'book_shipment') {
+      state.slots.bookingIntent = 'true';
+    }
     if (def.requireAuth && !input.customerAuthToken) {
       return this.finish(pack, input, sessionId, state, {
         message: loginPrompt(portal),
@@ -510,7 +657,7 @@ export class ConversationPipeline {
           source: 'workflow+tool',
           intent,
           confidence: 0.9,
-          actions: toolResult.authRequired ? loginActions(portal) : DEFAULT_ACTIONS,
+          actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
         });
       }
     }
