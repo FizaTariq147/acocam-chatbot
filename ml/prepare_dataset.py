@@ -28,9 +28,11 @@ QA_RE = re.compile(r"^Q\d+\.\s*(.+)\s*$", re.IGNORECASE)
 HEADING_RE = re.compile(r"^#{1,3}\s")
 
 SYSTEM = (
-    "You are the ACOCAM Trading Inc. customer assistant. "
-    "Answer only from company knowledge. Never invent prices, tracking status, "
-    "or bookings. If unsure, say so and offer a human agent."
+    "You are the ACOCAM Trading Inc. customer assistant — a warm, sharp logistics "
+    "specialist. Speak naturally like a helpful human agent. "
+    "Answer from company knowledge. Never invent prices, tracking status, or bookings. "
+    "Never say you lack a knowledge base. If unsure, give helpful ACOCAM guidance "
+    "and offer a human agent or quote review."
 )
 
 PARAPHRASE_PREFIXES = [
@@ -39,11 +41,41 @@ PARAPHRASE_PREFIXES = [
     "I need to know: ",
     "Can you explain: ",
     "Quick question — ",
+    "Just wondering: ",
+    "Help me with this: ",
 ]
+
+# Extra user-style variants for short greetings / basics (custom training coverage).
+GREETING_VARIANTS: dict[str, list[str]] = {
+    "hello": ["hello!", "hello there", "hello acocam", "hi hello"],
+    "hi": ["hi!", "hi there", "hii", "hi acocam", "hi team"],
+    "hey": ["hey!", "hey there", "hey acocam"],
+    "good morning": ["good morning!", "morning", "gm"],
+    "good afternoon": ["good afternoon!", "afternoon"],
+    "good evening": ["good evening!", "evening"],
+    "how are you": ["how are you?", "how are you doing?", "how's it going?", "how r u"],
+    "who are you": ["who are you?", "what are you?", "are you a bot?"],
+    "what can you do": ["what can you do?", "how can you help?", "what do you do?"],
+    "thank you": ["thank you!", "thanks a lot", "thanks so much", "many thanks"],
+    "thanks": ["thanks!", "thx", "ty"],
+    "bye": ["bye!", "bye bye", "see ya"],
+    "goodbye": ["goodbye!", "good bye"],
+    "help": ["help!", "i need help", "help me please", "can you help?"],
+}
 
 
 def normalize_question(text: str) -> str:
     return re.sub(r"[^a-z0-9\s]", " ", text.lower()).strip()
+
+
+def greeting_variants_for(question: str) -> list[str]:
+    key = normalize_question(question)
+    if key in GREETING_VARIANTS:
+        return GREETING_VARIANTS[key]
+    for base, variants in GREETING_VARIANTS.items():
+        if key.startswith(base) or base.startswith(key):
+            return variants
+    return []
 
 
 def rewrite_question(q: str) -> list[str]:
@@ -209,6 +241,10 @@ def expand(
             q2 = q.rstrip("?").strip()
             add_variant(f"Please answer this: {q2}?")
             add_variant(f"I want to know about: {q2}?")
+            add_variant(f"Could you help me with: {q2}?")
+            add_variant(f"Simple question — {q2}?")
+            for v in greeting_variants_for(q):
+                add_variant(v)
 
         variants = variants[:max_variants_per_question]
         for v in variants:
@@ -265,13 +301,13 @@ def main() -> None:
     parser.add_argument(
         "--paraphrase-level",
         type=int,
-        default=1,
-        help="0=original only, 1=prefixes, 2=rewrites, 3=more style paraphrases",
+        default=3,
+        help="0=original only, 1=prefixes, 2=rewrites, 3=more style paraphrases + greetings",
     )
     parser.add_argument(
         "--max-variants-per-question",
         type=int,
-        default=18,
+        default=24,
         help="Cap generated question variants per Q&A pair",
     )
     args = parser.parse_args()
