@@ -236,10 +236,6 @@ function isGreetingMessage(message: string): boolean {
   return GREETING_RE.test(m);
 }
 
-function shouldShowHelpPrompt(message: string): boolean {
-  return isNoiseMessage(message) || isGreetingMessage(message);
-}
-
 function helpPromptMessage(input: TurnInput): string {
   const bookOrQuote = input.customerAuthToken ? 'book a shipment' : 'get a quote';
   return [
@@ -248,6 +244,17 @@ function helpPromptMessage(input: TurnInput): string {
     `I can help you **${bookOrQuote}**, **track a shipment**, answer questions about ACOCAM services and destinations, or connect you with a human agent.`,
     '',
     'Choose an option below or type your question.',
+  ].join('\n');
+}
+
+/** Formal reply when the user sends random / invalid characters. */
+function noiseReplyMessage(): string {
+  return [
+    'I could not understand that message.',
+    '',
+    'Please enter a clear question in English — for example about shipping rates, tracking a shipment, requesting a quote, documents, or ACOCAM services.',
+    '',
+    'You may also use the buttons below, or type **talk to human** to speak with an ACOCAM agent.',
   ].join('\n');
 }
 
@@ -351,7 +358,21 @@ export class ConversationPipeline {
     if (
       !input.actionId &&
       state.workflow?.status !== 'active' &&
-      shouldShowHelpPrompt(input.message)
+      isNoiseMessage(input.message)
+    ) {
+      return this.finish(pack, input, session.sessionId, state, {
+        message: noiseReplyMessage(),
+        source: 'prompt',
+        intent: 'support.clarify',
+        confidence: 1,
+        actions: defaultActionsForUser(input),
+      });
+    }
+
+    if (
+      !input.actionId &&
+      state.workflow?.status !== 'active' &&
+      isGreetingMessage(input.message)
     ) {
       return this.finish(pack, input, session.sessionId, state, {
         message: helpPromptMessage(input),
@@ -575,7 +596,11 @@ export class ConversationPipeline {
       userMessage: input.message,
     });
 
-    const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages, agent);
+    const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages, {
+      agent,
+      customerName: state.slots.contact_name,
+      priorIntent: state.activeIntent,
+    });
 
     state.activeIntent = detected.intent;
     state.phase = 'ready';

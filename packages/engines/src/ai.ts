@@ -103,7 +103,11 @@ export class AiEngine {
     hits: KnowledgeHit[],
     userMessage: string,
     llmMessages?: LlmMessage[],
-    agent?: AgentSettings,
+    opts?: {
+      agent?: AgentSettings;
+      customerName?: string;
+      priorIntent?: string | null;
+    },
   ): Promise<{
     message: string;
     source: string;
@@ -111,8 +115,9 @@ export class AiEngine {
     citations: Array<{ id: string; title: string; score: number }>;
   }> {
     if (!hits.length) {
+      const fallback = acocamHumanFallback(userMessage);
       return {
-        message: acocamHumanFallback(userMessage),
+        message: opts?.customerName ? `${opts.customerName} — ${fallback}` : fallback,
         source: 'assistant',
         confidence: 0.62,
         citations: [],
@@ -122,7 +127,7 @@ export class AiEngine {
     const top = hits[0]!;
     const citations = hits.slice(0, 3).map((h) => ({ id: h.id, title: h.heading || h.title, score: h.score }));
 
-    const provider = this.providerForAgent(agent);
+    const provider = this.providerForAgent(opts?.agent);
     const useLocalModel =
       provider.name === 'local-finetuned' ||
       provider.name === 'openai-compatible';
@@ -158,7 +163,9 @@ export class AiEngine {
       }
       if (message.length >= 1500) message += '…';
       if (!exactQuestionMatch) {
-        message = humanizeRetrievedAnswer(message, userMessage);
+        message = humanizeRetrievedAnswer(message, userMessage, opts);
+      } else if (opts?.customerName) {
+        message = `${opts.customerName} — ${message}`;
       }
       return {
         message,
@@ -171,7 +178,7 @@ export class AiEngine {
     const result = await provider.complete(llmMessages);
     if (!result.ok || !result.content) {
       return {
-        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage),
+        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage, opts),
         source: 'knowledge',
         confidence: top.confidence,
         citations,
