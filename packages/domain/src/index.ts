@@ -102,6 +102,8 @@ export interface TenantSettings {
   name: string;
   publishableKey: string;
   secretKey: string;
+  /** Fallback logistics API origin when ACOCAM_API_BASE_URL env is unset (no trailing slash). */
+  apiBaseUrl?: string;
   agents: AgentSettings[];
   portal?: TenantPortalConfig;
   features?: {

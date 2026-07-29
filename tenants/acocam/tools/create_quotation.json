@@ -11,7 +11,7 @@
       "email": "contact_email",
       "phone": "contact_phone",
       "address": "origin",
-      "city": "origin",
+      "city": "origin_city",
       "country": "origin_country"
     },
     "consignee": {
@@ -19,7 +19,7 @@
       "email": "contact_email",
       "phone": "contact_phone",
       "address": "destination",
-      "city": "destination",
+      "city": "destination_city",
       "country": "destination_country"
     },
     "shipment": {

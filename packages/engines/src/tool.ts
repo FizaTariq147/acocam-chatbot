@@ -8,10 +8,96 @@ export interface PortalUrls {
 
 export interface ToolRuntimeContext {
   env: NodeJS.ProcessEnv;
+  /** Tenant-level fallback when the tool's baseUrlEnv is unset. */
+  apiBaseUrl?: string;
   /** Request-scoped customer JWT — never persisted by MemoryEngine. */
   customerAuthToken?: string;
   slots?: Record<string, string>;
   portal?: PortalUrls;
+}
+
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/$/, '');
+}
+
+/** Resolve logistics API origin: env var → tenant settings → generic API_BASE_URL. */
+export function resolveToolBaseUrl(
+  def: ToolDefinition,
+  ctx: ToolRuntimeContext,
+): { baseUrl: string; baseEnv: string } | { error: string } {
+  const baseEnv = def.baseUrlEnv ?? 'API_BASE_URL';
+  const raw =
+    ctx.env[baseEnv]?.trim() ||
+    ctx.apiBaseUrl?.trim() ||
+    ctx.env.API_BASE_URL?.trim() ||
+    '';
+  const baseUrl = normalizeBaseUrl(raw);
+  if (!baseUrl) {
+    return {
+      error: `Base URL not configured. Set ${baseEnv} in .env or apiBaseUrl in tenant settings.`,
+    };
+  }
+  return { baseUrl, baseEnv };
+}
+
+function describeFetchError(err: unknown, baseUrl: string, baseEnv: string, timeoutMs: number): string {
+  if (err instanceof Error && err.name === 'AbortError') {
+    return `Service timed out after ${timeoutMs}ms (is the logistics API running at ${baseUrl}?)`;
+  }
+  const cause =
+    err instanceof Error && err.cause && typeof err.cause === 'object'
+      ? (err.cause as NodeJS.ErrnoException)
+      : null;
+  const code = cause?.code ?? (err as NodeJS.ErrnoException)?.code;
+  if (code === 'ECONNREFUSED') {
+    return `Cannot connect to logistics API at ${baseUrl} (connection refused — check ${baseEnv} and ensure the API server is running)`;
+  }
+  if (code === 'ENOTFOUND') {
+    return `Cannot reach logistics API host for ${baseUrl} (host not found — check ${baseEnv})`;
+  }
+  if (err instanceof Error && err.message === 'fetch failed' && cause?.message) {
+    return `Cannot reach logistics API at ${baseUrl} (${cause.message})`;
+  }
+  return err instanceof Error ? err.message : 'Tool request failed';
+}
+
+function isHtmlBody(text: string): boolean {
+  return /^\s*<!DOCTYPE html/i.test(text) || /^\s*<html[\s>]/i.test(text);
+}
+
+function isTransientNetworkError(err: unknown): boolean {
+  const cause =
+    err instanceof Error && err.cause && typeof err.cause === 'object'
+      ? (err.cause as NodeJS.ErrnoException)
+      : null;
+  const code = cause?.code ?? (err as NodeJS.ErrnoException)?.code;
+  return code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ECONNRESET' || code === 'ETIMEDOUT';
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt === 0 && isTransientNetworkError(err)) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 function interpolate(template: string, slots: Record<string, string>): string {
@@ -47,6 +133,12 @@ function enrichQuoteSlots(slots: Record<string, string>): Record<string, string>
   }
   if (!out.consignee_name && out.contact_name) {
     out.consignee_name = out.contact_name;
+  }
+  if (/^same$/i.test(out.consignee_name?.trim() ?? '') && out.contact_name) {
+    out.consignee_name = out.contact_name;
+  }
+  if (out.bookingIntent === 'true') {
+    out._booking = 'true';
   }
   return out;
 }
@@ -165,6 +257,27 @@ function summarizeQuotation(data: unknown): string {
   return lines.join('\n');
 }
 
+function summarizeBooking(data: unknown, portal?: PortalUrls): string {
+  if (!data || typeof data !== 'object') {
+    return 'Your shipment booking was submitted, but I did not receive details back from the API.';
+  }
+  const q = data as Record<string, unknown>;
+  const id = q.id ?? q.quotation_id;
+  const status = q.status ?? 'pending';
+  const login = portal?.loginUrl ?? 'https://acocamtrading.ca/login';
+  const lines = ['Your **shipment booking** has been submitted to your ACOCAM account.'];
+  if (id) lines.push(`- Booking reference: **${id}**`);
+  lines.push(`- Status: **${status}**`);
+  lines.push(
+    '\nOur team will review routing, pricing, and documentation. Final rates are confirmed in your account — not in chat.',
+  );
+  if (typeof q.requires_manual_quote === 'boolean' && q.requires_manual_quote) {
+    lines.push('\nThis route requires specialist review — we will follow up by email.');
+  }
+  lines.push(`\nTrack progress in [your ACOCAM account](${login}).`);
+  return lines.join('\n');
+}
+
 function profileToWorkflowSlots(data: unknown): Record<string, string> {
   if (!data || typeof data !== 'object') return {};
   const user = data as Record<string, unknown>;
@@ -185,7 +298,7 @@ function loginPrompt(portal?: PortalUrls): string {
       ? [`- [Log in or create an account](${login})`]
       : [`- [Log in](${login})`, `- [Create account](${signup})`];
   return [
-    'To **get a quote** or submit a booking through the live ACOCAM system, please sign in to your account first:',
+    'To **book a shipment** or **get a quote** through the live ACOCAM system, please sign in to your account first:',
     '',
     ...authLines,
     `- [Get a quote on the website](${quote})`,
@@ -197,11 +310,11 @@ function loginPrompt(portal?: PortalUrls): string {
 
 export class ToolEngine {
   async execute(def: ToolDefinition, ctx: ToolRuntimeContext): Promise<ToolResult> {
-    const baseEnv = def.baseUrlEnv ?? 'API_BASE_URL';
-    const baseUrl = (ctx.env[baseEnv] ?? ctx.env.API_BASE_URL ?? '').replace(/\/$/, '');
-    if (!baseUrl) {
-      return { ok: false, error: `Base URL not configured (${baseEnv}).` };
+    const resolved = resolveToolBaseUrl(def, ctx);
+    if ('error' in resolved) {
+      return { ok: false, error: resolved.error };
     }
+    const { baseUrl, baseEnv } = resolved;
 
     let path = def.path;
     let slots = enrichQuoteSlots({ ...(ctx.slots ?? {}) });
@@ -236,16 +349,17 @@ export class ToolEngine {
     }
 
     const timeoutMs = Number(ctx.env.TOOL_TIMEOUT_MS ?? 15000);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const res = await fetch(url, {
-        method: def.method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
+      const res = await fetchWithRetry(
+        url,
+        {
+          method: def.method,
+          headers,
+          body,
+        },
+        timeoutMs,
+      );
       const text = await res.text();
       let data: unknown = text;
       try {
@@ -254,21 +368,26 @@ export class ToolEngine {
         /* keep text */
       }
       if (!res.ok) {
+        const bodyText = typeof text === 'string' ? text : '';
+        if (isHtmlBody(bodyText)) {
+          return {
+            ok: false,
+            httpStatus: res.status,
+            data,
+            error:
+              res.status === 404
+                ? `Logistics API endpoint not found at ${url} — ${baseEnv} may point to the website instead of the ACOCAM logistics backend`
+                : `Logistics API at ${baseUrl} returned HTML instead of JSON (HTTP ${res.status}) — check ${baseEnv}`,
+          };
+        }
         return { ok: false, httpStatus: res.status, data, error: `API returned ${res.status}` };
       }
       return { ok: true, httpStatus: res.status, data };
     } catch (err) {
-      const aborted = err instanceof Error && err.name === 'AbortError';
       return {
         ok: false,
-        error: aborted
-          ? `Service timed out after ${timeoutMs}ms (is ${baseEnv} running?)`
-          : err instanceof Error
-            ? err.message
-            : 'Tool request failed',
+        error: describeFetchError(err, baseUrl, baseEnv, timeoutMs),
       };
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -280,6 +399,12 @@ export class ToolEngine {
     if (!result.ok) {
       if (def.id === 'track_shipment') {
         const tn = slots?.trackingNumber ? ` **${slots.trackingNumber}**` : '';
+        if (result.httpStatus === 401 || result.httpStatus === 403) {
+          return [
+            `Sign-in is required to look up shipment${tn} in the live system.`,
+            loginPrompt(ctx?.portal),
+          ].join('\n\n');
+        }
         if (result.httpStatus === 404) {
           return [
             `I could not find a shipment${tn}.`,
@@ -296,8 +421,10 @@ export class ToolEngine {
         if (result.httpStatus === 401 || result.httpStatus === 403) {
           return loginPrompt(ctx?.portal);
         }
+        const isBooking = slots?.bookingIntent === 'true';
+        const action = isBooking ? 'shipment booking' : 'quotation request';
         return [
-          `I could not submit your quotation request${result.error ? ` (${result.error})` : ''}.`,
+          `I could not submit your ${action}${result.error ? ` (${result.error})` : ''}.`,
           `Please sign in at [acocamtrading.ca/login](${ctx?.portal?.loginUrl ?? 'https://acocamtrading.ca/login'}) or [get a quote online](${ctx?.portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/'}), then try again. You can also ask for a human agent.`,
         ].join(' ');
       }
@@ -308,6 +435,9 @@ export class ToolEngine {
       return summarizeTracking(result.data, fallback);
     }
     if (def.id === 'create_quotation') {
+      if (slots?.bookingIntent === 'true') {
+        return summarizeBooking(result.data, ctx?.portal);
+      }
       return summarizeQuotation(result.data);
     }
     return `Here is the result for **${def.label}**:\n\`\`\`json\n${JSON.stringify(result.data, null, 2).slice(0, 2500)}\n\`\`\``;

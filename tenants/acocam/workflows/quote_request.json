@@ -3,7 +3,7 @@
   "intent": "quote.request",
   "label": "Quote request",
   "requireAuth": true,
-  "intro": "I can submit a quotation request to your ACOCAM account. Quotes are subject to review — I will never invent a price.",
+  "intro": "I can collect your shipment details and connect you with ACOCAM for a quote. **Sign in** to book directly on your account — or continue as a guest and our team will follow up.",
   "steps": [
     { "id": "contact_name", "prompt": "What is your full name?", "required": true, "validator": "text" },
     { "id": "contact_email", "prompt": "What email is on your ACOCAM account?", "required": true, "validator": "email" },
