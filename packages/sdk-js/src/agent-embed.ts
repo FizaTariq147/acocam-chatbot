@@ -274,6 +274,15 @@ type TurnResponse = {
     });
   }
 
+  function adaptActionsForAuth(
+    actions: Array<{ id: string; label: string; url?: string }>,
+  ): Array<{ id: string; label: string; url?: string }> {
+    if (!resolveCustomerToken()) return actions;
+    return actions.map((a) =>
+      a.id === 'quote.request' ? { ...a, label: 'Book shipment' } : a,
+    );
+  }
+
   function renderActions(
     container: HTMLElement,
     actions: Array<{ id: string; label: string; url?: string }>,
@@ -281,7 +290,7 @@ type TurnResponse = {
     setActions: (actions: Array<{ id: string; label: string; url?: string }>) => void,
   ) {
     container.replaceChildren();
-    for (const action of actions) {
+    for (const action of adaptActionsForAuth(actions)) {
       const btn = el('button', { type: 'button' }, [action.label]) as HTMLButtonElement;
       bindAction(btn, action, log, setActions);
       container.appendChild(btn);
@@ -346,7 +355,7 @@ type TurnResponse = {
       actionsBar,
     ]);
 
-    renderActions(actionsBar, cfg.actions, log, setActions);
+    renderActions(actionsBar, adaptActionsForAuth(cfg.actions), log, setActions);
 
     const input = el('input', { type: 'text', placeholder: 'Type a message…' }) as HTMLInputElement;
     const sendBtn = el('button', { type: 'button' }, ['Send']);

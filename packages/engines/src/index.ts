@@ -28,6 +28,7 @@ export { WorkflowEngine } from './workflow.js';
 export {
   ToolEngine,
   summarizeTracking,
+  resolveToolBaseUrl,
   type ToolRuntimeContext,
   type PortalUrls,
   loginPrompt,
