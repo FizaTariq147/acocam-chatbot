@@ -106,11 +106,18 @@ export function acocamHumanFallback(userMessage: string): string {
  * Light human touch on retrieved FAQ answers without changing facts.
  * Avoids robotic "knowledge dump" feel for paraphrased questions.
  */
-export function humanizeRetrievedAnswer(answer: string, userMessage: string): string {
+export function humanizeRetrievedAnswer(
+  answer: string,
+  userMessage: string,
+  opts?: { customerName?: string; priorIntent?: string | null },
+): string {
   const text = answer.trim();
   if (!text) return acocamHumanFallback(userMessage);
 
   const m = userMessage.trim().toLowerCase();
+  const name = opts?.customerName?.trim();
+  const namePrefix = name ? `${name}, ` : '';
+
   // Already conversational greetings / thanks — leave as authored
   if (/^(hi|hello|hey|thanks|thank you|bye|goodbye|good\s*(morning|afternoon|evening))\b/.test(m)) {
     return text;
@@ -118,18 +125,21 @@ export function humanizeRetrievedAnswer(answer: string, userMessage: string): st
 
   // Don't stack openers if the answer already sounds spoken
   if (/^(sure|absolutely|happy to|of course|thanks|you('re| are) welcome|hello|hi\b)/i.test(text)) {
-    return text;
+    return name && !text.toLowerCase().includes(name.toLowerCase()) ? `${name}, ${text}` : text;
   }
 
   if (/^(what|explain|tell me|can you explain|how does)\b/.test(m)) {
-    return `Sure — here’s how it works at ACOCAM:\n\n${text}`;
+    return `Sure${name ? `, ${name}` : ''} — here’s how it works at ACOCAM:\n\n${text}`;
   }
   if (/^(do you|does acocam|can you|is it possible)\b/.test(m)) {
-    return `Yes — from the ACOCAM side:\n\n${text}`;
+    return `Yes${name ? `, ${name}` : ''} — from the ACOCAM side:\n\n${text}`;
   }
   if (/\b(how much|cost|price)\b/.test(m)) {
-    return `${text}\n\nIf you’d like, share origin, destination, and cargo details and I can guide a formal quote request.`;
+    return `${namePrefix}${text}\n\nIf you’d like, share origin, destination, and cargo details and I can guide a formal quote request.`;
+  }
+  if (opts?.priorIntent?.startsWith('quote') && /\b(document|track|lcl|fcl|air|vehicle)\b/.test(m)) {
+    return `${namePrefix}${text}\n\nWhenever you’re ready, we can continue your quote request as well.`;
   }
 
-  return text;
+  return name ? `${name} — ${text}` : text;
 }
