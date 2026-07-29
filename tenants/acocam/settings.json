@@ -15,7 +15,7 @@
       "name": "ACOCAM Assistant",
       "welcome": "Hello and welcome to ACOCAM Trading Inc., your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation.\n\nHow may I assist you today?",
       "defaultLanguage": "en",
-      "confidenceThreshold": 0.4,
+      "confidenceThreshold": 0.35,
       "escalationFailureThreshold": 2,
       "aiProvider": "null"
     }

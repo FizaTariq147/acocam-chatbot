@@ -23,6 +23,7 @@ export {
   createAiProviderFromEnv,
   type AiProvider,
 } from './ai.js';
+export { acocamHumanFallback, humanizeRetrievedAnswer, topicHints } from './response-style.js';
 export { WorkflowEngine } from './workflow.js';
 export {
   ToolEngine,
