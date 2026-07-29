@@ -18,6 +18,7 @@ import {
   acocamHumanFallback,
   loginPrompt,
   profileToWorkflowSlots,
+  extractTrackingNumber,
   type PortalUrls,
   type TenantPack,
 } from '@agent-platform/engines';
@@ -54,6 +55,16 @@ function defaultActionsForUser(input: TurnInput): ActionButton[] {
   ];
 }
 
+function tenantFeatures(pack: TenantPack) {
+  const f = pack.settings.features ?? {};
+  return {
+    workflows: f.workflows !== false,
+    tools: f.tools !== false,
+    escalation: f.escalation !== false,
+    streaming: f.streaming !== false,
+  };
+}
+
 function resolveWorkflow(
   pack: TenantPack,
   input: TurnInput,
@@ -67,34 +78,6 @@ function resolveWorkflow(
     return pack.workflows['book_shipment'];
   }
   return pack.workflows[workflowId];
-}
-
-/** Common English words that must never be treated as tracking numbers. */
-const TRACKING_STOPWORDS = new Set(
-  [
-    'shipment', 'shipping', 'services', 'service', 'tracking', 'package', 'packages',
-    'container', 'freight', 'customs', 'document', 'documents', 'worldwide',
-    'individual', 'business', 'customer', 'customer', 'destination', 'destinations',
-    'quotation', 'quotations', 'acocam', 'trading', 'canada', 'africa', 'vehicle',
-    'motorcycle', 'personal', 'effects', 'commercial', 'support', 'customer',
-    
-  ].map((w) => w.toLowerCase()),
-);
-
-/** Strict tracking refs: ACO-#### or alphanumeric tokens that contain a digit. */
-const TRACKING_REF_RE =
-  /\b(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)(?![A-Z]*$)[A-Z0-9-]{6,})\b/gi;
-
-function extractTrackingNumber(message: string): string | undefined {
-  const matches = message.match(TRACKING_REF_RE) ?? [];
-  for (const raw of matches.reverse()) {
-    const cleaned = raw.replace(/\s+/g, '').toUpperCase();
-    if (TRACKING_STOPWORDS.has(cleaned.toLowerCase())) continue;
-    if (!/\d/.test(cleaned)) continue;
-    if (cleaned.length < 5) continue;
-    return cleaned;
-  }
-  return undefined;
 }
 
 function looksLikeFaqQuestion(message: string): boolean {
@@ -343,6 +326,7 @@ export class ConversationPipeline {
     if (!agent) {
       throw new Error(`Unknown agent: ${input.agentId}`);
     }
+    const features = tenantFeatures(pack);
 
     const store = this.svc.memory.getStore();
     const session = await store.get(input.tenantId, input.sessionId);
@@ -391,7 +375,7 @@ export class ConversationPipeline {
       }
     }
 
-    if (state.workflow?.status === 'active') {
+    if (state.workflow?.status === 'active' && features.workflows) {
       const def = pack.workflows[state.workflow.workflowId];
       if (def) {
         const userText =
@@ -483,20 +467,25 @@ export class ConversationPipeline {
       confidenceThreshold: agent.confidenceThreshold,
       policy: pack.policies.escalation,
       intent: detected.intent,
+      agentFailureThreshold: agent.escalationFailureThreshold,
     });
 
-    if (escEarly.shouldEscalate && (escEarly.mode === 'transfer' || detected.handler === 'escalation')) {
+    if (
+      features.escalation &&
+      escEarly.shouldEscalate &&
+      (escEarly.mode === 'transfer' || detected.handler === 'escalation')
+    ) {
       return this.escalateNow(pack, input, session, state, escEarly.primaryReason);
     }
 
-    if (detected.handler === 'workflow' && intentDef?.workflowId) {
+    if (detected.handler === 'workflow' && features.workflows && intentDef?.workflowId) {
       const def = resolveWorkflow(pack, input, intentDef.workflowId);
       if (def) {
         return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
       }
     }
 
-    if (detected.handler === 'tool' && intentDef?.toolId && pack.tools[intentDef.toolId]) {
+    if (detected.handler === 'tool' && features.tools && intentDef?.toolId && pack.tools[intentDef.toolId]) {
       const toolDef = pack.tools[intentDef.toolId]!;
       if (toolDef.requireAuth && !input.customerAuthToken) {
         const portal = getPortalUrls(pack, this.svc.env);
@@ -569,6 +558,7 @@ export class ConversationPipeline {
   ): Promise<TurnResponse | null> {
     const agent = this.svc.config.getAgent(pack, input.agentId);
     if (!agent) return null;
+    const features = tenantFeatures(pack);
 
     const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4);
 
@@ -585,7 +575,7 @@ export class ConversationPipeline {
       userMessage: input.message,
     });
 
-    const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages);
+    const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages, agent);
 
     state.activeIntent = detected.intent;
     state.phase = 'ready';
@@ -605,11 +595,12 @@ export class ConversationPipeline {
       confidenceThreshold: agent.confidenceThreshold,
       policy: pack.policies.escalation,
       intent: detected.intent,
+      agentFailureThreshold: agent.escalationFailureThreshold,
     });
 
-    if (escLate.shouldEscalate && escLate.mode === 'offer') {
+    if (features.escalation && escLate.shouldEscalate && escLate.mode === 'offer') {
       message += `\n\n${pack.policies.escalation.offerPhrases[0] ?? 'Would you like a human agent?'}`;
-    } else if (escLate.shouldEscalate && escLate.mode === 'transfer') {
+    } else if (features.escalation && escLate.shouldEscalate && escLate.mode === 'transfer') {
       return this.escalateNow(pack, input, session, state, escLate.primaryReason, message);
     }
 

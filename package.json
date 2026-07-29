@@ -11,6 +11,8 @@
     "start": "npm run start -w @agent-platform/api",
     "reindex": "npm run reindex -w @agent-platform/api",
     "check:acocam-api": "node scripts/check-acocam-api.mjs",
+  "check:local": "node scripts/check-local.mjs",
+  "test": "npm run test --workspaces --if-present",
     "train:prepare": "python ml/prepare_dataset.py",
     "train:lora": "python ml/train_lora.py",
     "train:pipeline": "python ml/train_pipeline.py",

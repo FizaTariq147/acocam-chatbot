@@ -3,10 +3,13 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPlatform } from './platform.js';
+import { createPlatform, bootstrapKnowledge } from './platform.js';
+import { sanitizeTenantId, validateCustomerToken } from '@agent-platform/engines';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const platform = createPlatform();
+
+const MAX_MESSAGE_LENGTH = Number(process.env.MAX_MESSAGE_LENGTH ?? 4000);
 
 function getApiKey(headers: Record<string, unknown>): string | undefined {
   const auth = headers.authorization;
@@ -18,8 +21,16 @@ function getApiKey(headers: Record<string, unknown>): string | undefined {
 }
 
 async function main() {
-  const app = Fastify({ logger: true });
-  await app.register(cors, { origin: true });
+  const app = Fastify({
+    logger: true,
+    trustProxy: process.env.TRUST_PROXY === 'true',
+    bodyLimit: Number(process.env.BODY_LIMIT_BYTES ?? 65536),
+  });
+
+  const corsOrigin = process.env.CORS_ORIGIN?.trim();
+  await app.register(cors, {
+    origin: corsOrigin ? corsOrigin.split(',').map((o) => o.trim()) : true,
+  });
 
   const sdkDist = path.resolve(__dirname, '../../../packages/sdk-js/dist');
   await app.register(fastifyStatic, {
@@ -32,7 +43,21 @@ async function main() {
   app.get('/favicon.ico', async (_req, reply) => reply.code(204).send());
 
   app.get('/health', async () => ({ ok: true, service: 'ai-agent-platform' }));
-  app.get('/v1/health', async () => ({ ok: true }));
+  app.get('/v1/health', async () => {
+    let knowledgeReady = false;
+    try {
+      const hits = await platform.knowledge.search('acocam', 'hello', 1);
+      knowledgeReady = hits.length > 0;
+    } catch {
+      knowledgeReady = false;
+    }
+    return {
+      ok: true,
+      knowledgeReady,
+      dataDir: platform.dataDir,
+      sessionsPersisted: process.env.PERSIST_SESSIONS !== 'false',
+    };
+  });
 
   app.get('/demo', async (_req, reply) => {
     const html = `<!DOCTYPE html>
@@ -55,6 +80,9 @@ async function main() {
     const tenantIdx = parts.indexOf('tenants');
     if (tenantIdx < 0 || !parts[tenantIdx + 1]) return;
     const tenantId = parts[tenantIdx + 1]!;
+    if (!sanitizeTenantId(tenantId)) {
+      return reply.code(400).send({ ok: false, error: 'Invalid tenant id' });
+    }
     const key = getApiKey(req.headers as Record<string, unknown>);
     const ip = req.ip || 'unknown';
     if (!platform.rateLimiter.allow(`${tenantId}:${ip}`)) {
@@ -130,8 +158,19 @@ async function main() {
     Body: { message?: string; actionId?: string; customerAuthToken?: string };
   }>('/v1/tenants/:tenantId/agents/:agentId/sessions/:sessionId/messages', async (req, reply) => {
     const message = req.body?.message?.trim() ?? '';
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return reply.code(400).send({ ok: false, error: `Message exceeds ${MAX_MESSAGE_LENGTH} characters` });
+    }
     if (!message && !req.body?.actionId) {
       return reply.code(400).send({ ok: false, error: 'message or actionId required' });
+    }
+    let customerAuthToken = req.body?.customerAuthToken;
+    if (customerAuthToken) {
+      const checked = validateCustomerToken(customerAuthToken, process.env);
+      if (!checked.ok) {
+        return reply.code(401).send({ ok: false, error: checked.error });
+      }
+      customerAuthToken = checked.token;
     }
     try {
       const result = await platform.pipeline.handleTurn({
@@ -140,11 +179,13 @@ async function main() {
         sessionId: req.params.sessionId,
         message: message || String(req.body?.actionId),
         actionId: req.body?.actionId,
-        customerAuthToken: req.body?.customerAuthToken,
+        customerAuthToken,
       });
       return result;
     } catch (err) {
-      return reply.code(400).send({ ok: false, error: err instanceof Error ? err.message : 'Turn failed' });
+      const msg = err instanceof Error ? err.message : 'Turn failed';
+      const code = msg.includes('not found') || msg.includes('Unknown') ? 404 : 400;
+      return reply.code(code).send({ ok: false, error: msg });
     }
   });
 
@@ -176,22 +217,32 @@ async function main() {
   });
 
   // Optional SSE streaming stub (Phase 3)
-  app.get<{ Params: { tenantId: string; agentId: string; sessionId: string }; Querystring: { message?: string } }>(
+  app.get<{ Params: { tenantId: string; agentId: string; sessionId: string }; Querystring: { message?: string; customerAuthToken?: string } }>(
     '/v1/tenants/:tenantId/agents/:agentId/sessions/:sessionId/stream',
     async (req, reply) => {
+      const pack = await platform.config.load(req.params.tenantId);
+      if (pack.settings.features?.streaming === false) {
+        return reply.code(404).send({ ok: false, error: 'Streaming disabled for this tenant' });
+      }
       reply.hijack();
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-      const message = req.query.message || 'hello';
+      const message = (req.query.message || 'hello').slice(0, MAX_MESSAGE_LENGTH);
+      let customerAuthToken = req.query.customerAuthToken;
+      if (customerAuthToken) {
+        const checked = validateCustomerToken(customerAuthToken, process.env);
+        customerAuthToken = checked.ok ? checked.token : undefined;
+      }
       try {
         const result = await platform.pipeline.handleTurn({
           tenantId: req.params.tenantId,
           agentId: req.params.agentId,
           sessionId: req.params.sessionId,
           message,
+          customerAuthToken,
         });
         reply.raw.write(`data: ${JSON.stringify({ type: 'token', text: result.message })}\n\n`);
         reply.raw.write(`data: ${JSON.stringify({ type: 'done', result })}\n\n`);
@@ -214,12 +265,12 @@ async function main() {
   const port = Number(process.env.PORT ?? 8787);
   const host = process.env.HOST ?? '0.0.0.0';
 
-  // Boot-time reindex for known tenants
+  // Boot-time knowledge bootstrap for all tenants
   try {
-    const pack = await platform.config.load('acocam');
-    await platform.knowledge.reindexTenant('acocam', pack.knowledgeDir);
-    app.log.info('ACOCAM knowledge indexed');
+    await bootstrapKnowledge(platform.config, platform.knowledge, platform.tenantsDir);
+    app.log.info('Knowledge indexes ready');
 
+    const pack = await platform.config.load('acocam');
     const apiBase =
       process.env.ACOCAM_API_BASE_URL?.trim() ||
       pack.settings.apiBaseUrl?.trim() ||

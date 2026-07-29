@@ -11,6 +11,8 @@ npm run reindex
 npm run dev
 ```
 
+`npm run dev` builds the embed SDK automatically, then starts the API on port 8787.
+
 Open [examples/embed-demo.html](examples/embed-demo.html) or visit `http://localhost:8787/demo` (root `/` redirects there).
 
 **Tracking / quotes require two servers:**
