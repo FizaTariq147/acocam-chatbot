@@ -3,7 +3,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
-.env.example
 .DS_Store
 data/indexes/
 *.log
