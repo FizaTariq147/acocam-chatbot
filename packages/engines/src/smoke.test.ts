@@ -39,6 +39,41 @@ describe('security', () => {
   });
 });
 
+describe('greeting vs noise routing', () => {
+  function normalizeShortMessage(message: string): string {
+    return message.trim().toLowerCase().replace(/[!?.…]+$/g, '').trim();
+  }
+
+  function looksLikeThanksOnly(message: string): boolean {
+    const m = normalizeShortMessage(message);
+    if (!m || /\b(bye|goodbye)\b/.test(m)) return false;
+    return /^(thanks|thank you|thx|ty|ok thanks)\b/.test(m);
+  }
+
+  function looksLikeGoodbye(message: string): boolean {
+    const m = normalizeShortMessage(message);
+    if (!m) return false;
+    if (/^(bye+|goodbye+|see you)\b/.test(m)) return true;
+    return /\b(bye|goodbye)\b/.test(m);
+  }
+
+  function isPureGreeting(message: string): boolean {
+    const m = normalizeShortMessage(message);
+    if (looksLikeThanksOnly(message) || looksLikeGoodbye(message)) return false;
+    return /^(hi|hey|hello|good morning)\b/.test(m);
+  }
+
+  it('routes greetings, thanks, and goodbye separately', () => {
+    assert.ok(isPureGreeting('hey'));
+    assert.ok(isPureGreeting('Hi'));
+    assert.ok(looksLikeThanksOnly('thank you'));
+    assert.ok(looksLikeGoodbye('Byee'));
+    assert.ok(looksLikeGoodbye('Thank you bye'));
+    assert.ok(!isPureGreeting('thank you'));
+    assert.ok(!isPureGreeting('Byee'));
+  });
+});
+
 describe('intent', () => {
   const engine = new IntentEngine();
   const intents = [
