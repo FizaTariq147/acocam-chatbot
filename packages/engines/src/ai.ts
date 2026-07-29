@@ -92,15 +92,21 @@ export class AiEngine {
     this.provider = provider;
   }
 
-  async answerFromKnowledge(hits: KnowledgeHit[], userMessage: string, llmMessages?: LlmMessage[]): Promise<{
+  async answerFromKnowledge(
+    hits: KnowledgeHit[],
+    userMessage: string,
+    llmMessages?: LlmMessage[],
+    style?: { customerName?: string; priorIntent?: string | null },
+  ): Promise<{
     message: string;
     source: string;
     confidence: number;
     citations: Array<{ id: string; title: string; score: number }>;
   }> {
     if (!hits.length) {
+      const fallback = acocamHumanFallback(userMessage);
       return {
-        message: acocamHumanFallback(userMessage),
+        message: style?.customerName ? `${style.customerName} — ${fallback}` : fallback,
         source: 'assistant',
         confidence: 0.62,
         citations: [],
@@ -145,7 +151,9 @@ export class AiEngine {
       }
       if (message.length >= 1500) message += '…';
       if (!exactQuestionMatch) {
-        message = humanizeRetrievedAnswer(message, userMessage);
+        message = humanizeRetrievedAnswer(message, userMessage, style);
+      } else if (style?.customerName) {
+        message = `${style.customerName} — ${message}`;
       }
       return {
         message,
@@ -158,7 +166,7 @@ export class AiEngine {
     const result = await this.provider.complete(llmMessages);
     if (!result.ok || !result.content) {
       return {
-        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage),
+        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage, style),
         source: 'knowledge',
         confidence: top.confidence,
         citations,

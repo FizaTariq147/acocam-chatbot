@@ -120,6 +120,52 @@ type TurnResponse = {
     appendRichContent(bubble, text);
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
+    return bubble;
+  }
+
+  function showThinking(log: HTMLElement): HTMLElement {
+    const bubble = el('div', { className: 'aap-bubble aap-assistant aap-thinking' });
+    bubble.innerHTML =
+      '<span class="aap-think-label">ACOCAM is thinking</span><span class="aap-dots"><i></i><i></i><i></i></span>';
+    log.appendChild(bubble);
+    log.scrollTop = log.scrollHeight;
+    return bubble;
+  }
+
+  function typeAssistantMessage(log: HTMLElement, text: string): Promise<void> {
+    return new Promise((resolve) => {
+      const bubble = el('div', { className: 'aap-bubble aap-assistant aap-streaming' });
+      const body = el('span', { className: 'aap-stream-body' });
+      const caret = el('span', { className: 'aap-caret' }, ['']);
+      bubble.appendChild(body);
+      bubble.appendChild(caret);
+      log.appendChild(bubble);
+
+      const chars = Array.from(text);
+      let i = 0;
+      // ~28–45 chars/sec with slight jitter — feels like ChatGPT typing
+      const baseDelay = chars.length > 600 ? 8 : chars.length > 250 ? 12 : 16;
+
+      const tick = () => {
+        if (i >= chars.length) {
+          caret.remove();
+          bubble.classList.remove('aap-streaming');
+          body.replaceChildren();
+          appendRichContent(body, text);
+          log.scrollTop = log.scrollHeight;
+          resolve();
+          return;
+        }
+        // Type in small chunks for smoother animation
+        const chunk = Math.min(2 + Math.floor(Math.random() * 3), chars.length - i);
+        body.textContent = (body.textContent || '') + chars.slice(i, i + chunk).join('');
+        i += chunk;
+        log.scrollTop = log.scrollHeight;
+        const pause = chars[i - 1] === '\n' ? baseDelay * 4 : baseDelay + Math.floor(Math.random() * 10);
+        window.setTimeout(tick, pause);
+      };
+      tick();
+    });
   }
 
   type RichSegment =
@@ -258,6 +304,7 @@ type TurnResponse = {
         try {
           await ensureSession();
           appendBubble(log, 'user', action.label);
+          const wait = showThinking(log);
           const result = await api<TurnResponse>(
             `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
             {
@@ -265,10 +312,15 @@ type TurnResponse = {
               body: messageBody('', action.id),
             },
           );
-          appendBubble(log, 'assistant', result.message);
+          wait.remove();
+          await typeAssistantMessage(log, result.message);
           if (result.actions?.length) setActions(result.actions);
         } catch (err) {
-          appendBubble(log, 'assistant', err instanceof Error ? err.message : 'Request failed');
+          log.querySelectorAll('.aap-thinking').forEach((n) => n.remove());
+          await typeAssistantMessage(
+            log,
+            err instanceof Error ? err.message : 'Request failed',
+          );
         }
       })();
     });
@@ -305,16 +357,23 @@ type TurnResponse = {
   ) {
     await ensureSession();
     if (text) appendBubble(log, 'user', text);
-    const result = await api<TurnResponse>(
-      `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
-      {
-        method: 'POST',
-        body: messageBody(text, actionId),
-      },
-    );
-    appendBubble(log, 'assistant', result.message);
-    if (result.actions?.length) setActions(result.actions);
-    return result;
+    const thinking = showThinking(log);
+    try {
+      const result = await api<TurnResponse>(
+        `/tenants/${tenant}/agents/${agent}/sessions/${sessionId}/messages`,
+        {
+          method: 'POST',
+          body: messageBody(text, actionId),
+        },
+      );
+      thinking.remove();
+      await typeAssistantMessage(log, result.message);
+      if (result.actions?.length) setActions(result.actions);
+      return result;
+    } catch (err) {
+      thinking.remove();
+      throw err;
+    }
   }
 
   function mount(cfg: PublicConfig) {
@@ -334,6 +393,15 @@ type TurnResponse = {
       .aap-assistant a.aap-link{color:#2563eb}
       .aap-user{margin-left:auto;background:${cfg.theme.primaryColor};color:#fff}
       .aap-assistant{margin-right:auto;background:#fff;border:1px solid #e2e8f0}
+      .aap-thinking{display:flex;align-items:center;gap:10px;color:#64748b;font-size:13px}
+      .aap-think-label{opacity:.85}
+      .aap-dots{display:inline-flex;gap:4px;align-items:center}
+      .aap-dots i{width:6px;height:6px;border-radius:50%;background:#94a3b8;display:inline-block;animation:aap-bounce 1.2s infinite ease-in-out}
+      .aap-dots i:nth-child(2){animation-delay:.15s}
+      .aap-dots i:nth-child(3){animation-delay:.3s}
+      @keyframes aap-bounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-4px);opacity:1}}
+      .aap-streaming .aap-caret{display:inline-block;width:7px;height:1.05em;margin-left:2px;background:${cfg.theme.primaryColor};vertical-align:text-bottom;animation:aap-blink 1s step-end infinite}
+      @keyframes aap-blink{50%{opacity:0}}
       .aap-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid #e2e8f0;background:#fff}
       .aap-actions button{border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;cursor:pointer}
       .aap-form{display:flex;gap:8px;padding:10px;border-top:1px solid #e2e8f0;background:#fff}
@@ -370,18 +438,26 @@ type TurnResponse = {
       open = !open;
       panel.classList.toggle('open', open);
       if (open && log.childNodes.length === 0) {
-        appendBubble(log, 'assistant', cfg.welcome);
+        void typeAssistantMessage(log, cfg.welcome);
         void ensureSession();
       }
     });
 
     const submit = () => {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || input.disabled) return;
       input.value = '';
-      void sendMessage(text, undefined, log, setActions).catch((err: Error) => {
-        appendBubble(log, 'assistant', err.message || 'Something went wrong.');
-      });
+      input.disabled = true;
+      sendBtn.setAttribute('disabled', 'true');
+      void sendMessage(text, undefined, log, setActions)
+        .catch(async (err: Error) => {
+          await typeAssistantMessage(log, err.message || 'Something went wrong.');
+        })
+        .finally(() => {
+          input.disabled = false;
+          sendBtn.removeAttribute('disabled');
+          input.focus();
+        });
     };
     sendBtn.addEventListener('click', submit);
     input.addEventListener('keydown', (e) => {
