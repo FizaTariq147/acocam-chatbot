@@ -391,7 +391,7 @@ type TurnResponse = {
     const textDark = '#0f172a';
     const style = el('style', {}, [
       `
-      .aap-root{position:fixed;bottom:32px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4}
+      .aap-root{position:fixed;bottom:72px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4}
       .aap-root *,.aap-root *::before,.aap-root *::after{box-sizing:border-box;font-family:${font}!important}
       .aap-launcher{background:${blue}!important;color:#fff!important;border:0!important;border-radius:999px;padding:12px 18px;cursor:pointer;box-shadow:0 8px 24px rgba(3,74,118,.35);font-weight:600;font-size:14px}
       .aap-panel{display:none;width:min(380px,calc(100vw - 24px));height:520px;background:#fff!important;color:${textDark};border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(15,23,42,.25);flex-direction:column;margin-bottom:12px;border:1px solid #e2e8f0}
