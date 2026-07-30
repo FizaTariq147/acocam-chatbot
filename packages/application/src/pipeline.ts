@@ -18,6 +18,7 @@ import {
   acocamHumanFallback,
   loginPrompt,
   profileToWorkflowSlots,
+  extractTrackingNumber,
   type PortalUrls,
   type TenantPack,
 } from '@agent-platform/engines';
@@ -54,6 +55,16 @@ function defaultActionsForUser(input: TurnInput): ActionButton[] {
   ];
 }
 
+function tenantFeatures(pack: TenantPack) {
+  const f = pack.settings.features ?? {};
+  return {
+    workflows: f.workflows !== false,
+    tools: f.tools !== false,
+    escalation: f.escalation !== false,
+    streaming: f.streaming !== false,
+  };
+}
+
 function resolveWorkflow(
   pack: TenantPack,
   input: TurnInput,
@@ -67,34 +78,6 @@ function resolveWorkflow(
     return pack.workflows['book_shipment'];
   }
   return pack.workflows[workflowId];
-}
-
-/** Common English words that must never be treated as tracking numbers. */
-const TRACKING_STOPWORDS = new Set(
-  [
-    'shipment', 'shipping', 'services', 'service', 'tracking', 'package', 'packages',
-    'container', 'freight', 'customs', 'document', 'documents', 'worldwide',
-    'individual', 'business', 'customer', 'customer', 'destination', 'destinations',
-    'quotation', 'quotations', 'acocam', 'trading', 'canada', 'africa', 'vehicle',
-    'motorcycle', 'personal', 'effects', 'commercial', 'support', 'customer',
-    
-  ].map((w) => w.toLowerCase()),
-);
-
-/** Strict tracking refs: ACO-#### or alphanumeric tokens that contain a digit. */
-const TRACKING_REF_RE =
-  /\b(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)(?![A-Z]*$)[A-Z0-9-]{6,})\b/gi;
-
-function extractTrackingNumber(message: string): string | undefined {
-  const matches = message.match(TRACKING_REF_RE) ?? [];
-  for (const raw of matches.reverse()) {
-    const cleaned = raw.replace(/\s+/g, '').toUpperCase();
-    if (TRACKING_STOPWORDS.has(cleaned.toLowerCase())) continue;
-    if (!/\d/.test(cleaned)) continue;
-    if (cleaned.length < 5) continue;
-    return cleaned;
-  }
-  return undefined;
 }
 
 function looksLikeFaqQuestion(message: string): boolean {
@@ -115,8 +98,40 @@ function looksLikeGreeting(message: string): boolean {
 }
 
 function looksLikeThanksOrBye(message: string): boolean {
-  const m = message.trim().toLowerCase().replace(/[!.,]+$/g, '');
-  return /^(thanks|thank you|thx|ty|bye|goodbye|see you|ok thanks|that('|’)s all|nothing else)\b/.test(m);
+  return looksLikeThanksOnly(message) || looksLikeGoodbye(message);
+}
+
+function normalizeShortMessage(message: string): string {
+  return message.trim().toLowerCase().replace(/[!?.…]+$/g, '').trim();
+}
+
+/** Thanks without goodbye — e.g. "thank you", "thanks". */
+function looksLikeThanksOnly(message: string): boolean {
+  const m = normalizeShortMessage(message);
+  if (!m || looksLikeGoodbye(message)) return false;
+  return /^(thanks|thank you|thx|ty|much appreciated|appreciate it|ok thanks)\b/.test(m);
+}
+
+/** Goodbye — including "thank you bye", "byee", "thanks bye". */
+function looksLikeGoodbye(message: string): boolean {
+  const m = normalizeShortMessage(message);
+  if (!m) return false;
+  if (/^(bye+|goodbye+|see you|see ya|good night|take care|that('|’)s all|nothing else)\b/.test(m)) {
+    return true;
+  }
+  return /\b(bye|goodbye)\b/.test(m);
+}
+
+/** Hi / hello / good morning — not thanks or bye. */
+function isPureGreetingMessage(message: string): boolean {
+  const m = normalizeShortMessage(message);
+  if (!m || extractTrackingNumber(m)) return false;
+  if (looksLikeTransactional(m) || looksLikeFaqQuestion(m)) return false;
+  if (looksLikeThanksOnly(message) || looksLikeGoodbye(message)) return false;
+  if (looksLikeGreeting(m)) return true;
+  return /^(hi|hey|hello|hiya|yo|howdy|greetings|help|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening)\b/.test(
+    m,
+  );
 }
 
 /** Short answers that look like workflow slot fills (name, email, phone, city). */
@@ -165,6 +180,16 @@ const SHORT_ACTION_WORDS = new Set(['ok', 'okay', 'no', 'yes', 'y', 'n', 'quote'
 /** Real short tokens — not random keyboard noise (SAA, ssaa, etc.). */
 const SHORT_ALLOWED_WORDS = new Set([
   ...SHORT_ACTION_WORDS,
+  'hi',
+  'hey',
+  'hello',
+  'hiya',
+  'yo',
+  'hola',
+  'bye',
+  'byee',
+  'thanks',
+  'thx',
   'fcl',
   'lcl',
   'awb',
@@ -214,8 +239,7 @@ function tokenLooksLikeGibberish(token: string): boolean {
   const lettersOnly = /^[a-zA-Z]+$/.test(t);
   if (lettersOnly && t.length >= 2 && t.length <= 5) {
     if (vowelRatio(t) === 0) return true;
-    if (hasRepeatedLetterRuns(t)) return true;
-    if (t.length <= 4) return true;
+    if (hasRepeatedLetterRuns(t) && t.length <= 4) return true;
   }
   if (lettersOnly && t.length <= 12 && vowelRatio(t) === 0) return true;
   if (lettersOnly && t.length >= 6 && t.length <= 12 && vowelRatio(t) < 0.2) return true;
@@ -226,6 +250,13 @@ function tokenLooksLikeGibberish(token: string): boolean {
 function isNoiseMessage(message: string): boolean {
   const m = message.trim();
   if (!m) return true;
+  if (
+    isPureGreetingMessage(m) ||
+    looksLikeThanksOnly(m) ||
+    looksLikeGoodbye(m)
+  ) {
+    return false;
+  }
   const lower = m.toLowerCase();
   if (SHORT_ACTION_WORDS.has(lower)) return false;
   if (extractTrackingNumber(m)) return false;
@@ -242,15 +273,28 @@ function isNoiseMessage(message: string): boolean {
   return false;
 }
 
-const GREETING_RE =
-  /^(?:hi|hey|hello|hiya|yo|howdy|greetings|help|thanks|thank\s+you|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening)(?:\s+there)?[!?.…]*$/i;
+function thanksReplyMessage(): string {
+  return [
+    "You're welcome!",
+    '',
+    'If you need anything else — tracking, a quote, or service information — just ask.',
+    'Have a great day.',
+  ].join('\n');
+}
 
-function isGreetingMessage(message: string): boolean {
-  const m = message.trim().replace(/[!?.…]+$/g, '').trim();
-  if (!m) return false;
-  if (extractTrackingNumber(m)) return false;
-  if (looksLikeTransactional(m) || looksLikeFaqQuestion(m)) return false;
-  return GREETING_RE.test(m);
+function goodbyeReplyMessage(thanksIncluded: boolean): string {
+  if (thanksIncluded) {
+    return [
+      "You're welcome — goodbye!",
+      '',
+      'Thank you for contacting ACOCAM Trading Inc. Safe travels with your cargo — return anytime if you need help.',
+    ].join('\n');
+  }
+  return [
+    'Goodbye!',
+    '',
+    'Thank you for contacting ACOCAM Trading Inc. Safe travels with your cargo — return anytime if you need help.',
+  ].join('\n');
 }
 
 function helpPromptMessage(input: TurnInput): string {
@@ -350,6 +394,7 @@ export class ConversationPipeline {
     if (!agent) {
       throw new Error(`Unknown agent: ${input.agentId}`);
     }
+    const features = tenantFeatures(pack);
 
     const store = this.svc.memory.getStore();
     const session = await store.get(input.tenantId, input.sessionId);
@@ -371,6 +416,37 @@ export class ConversationPipeline {
       });
     }
 
+    if (!input.actionId && state.workflow?.status !== 'active') {
+      if (looksLikeGoodbye(input.message)) {
+        const thanksIncluded = /\b(thank|thanks|thx|ty)\b/i.test(input.message);
+        return this.finish(pack, input, session.sessionId, state, {
+          message: goodbyeReplyMessage(thanksIncluded),
+          source: 'prompt',
+          intent: 'conversational.goodbye',
+          confidence: 1,
+          actions: defaultActionsForUser(input),
+        });
+      }
+      if (looksLikeThanksOnly(input.message)) {
+        return this.finish(pack, input, session.sessionId, state, {
+          message: thanksReplyMessage(),
+          source: 'prompt',
+          intent: 'conversational.thanks',
+          confidence: 1,
+          actions: defaultActionsForUser(input),
+        });
+      }
+      if (isPureGreetingMessage(input.message)) {
+        return this.finish(pack, input, session.sessionId, state, {
+          message: helpPromptMessage(input),
+          source: 'prompt',
+          intent: 'support.help',
+          confidence: 1,
+          actions: defaultActionsForUser(input),
+        });
+      }
+    }
+
     if (
       !input.actionId &&
       state.workflow?.status !== 'active' &&
@@ -380,20 +456,6 @@ export class ConversationPipeline {
         message: noiseReplyMessage(),
         source: 'prompt',
         intent: 'support.clarify',
-        confidence: 1,
-        actions: defaultActionsForUser(input),
-      });
-    }
-
-    if (
-      !input.actionId &&
-      state.workflow?.status !== 'active' &&
-      isGreetingMessage(input.message)
-    ) {
-      return this.finish(pack, input, session.sessionId, state, {
-        message: helpPromptMessage(input),
-        source: 'prompt',
-        intent: 'support.help',
         confidence: 1,
         actions: defaultActionsForUser(input),
       });
@@ -412,7 +474,7 @@ export class ConversationPipeline {
       }
     }
 
-    if (state.workflow?.status === 'active') {
+    if (state.workflow?.status === 'active' && features.workflows) {
       const def = pack.workflows[state.workflow.workflowId];
       if (def) {
         const userText =
@@ -504,20 +566,25 @@ export class ConversationPipeline {
       confidenceThreshold: agent.confidenceThreshold,
       policy: pack.policies.escalation,
       intent: detected.intent,
+      agentFailureThreshold: agent.escalationFailureThreshold,
     });
 
-    if (escEarly.shouldEscalate && (escEarly.mode === 'transfer' || detected.handler === 'escalation')) {
+    if (
+      features.escalation &&
+      escEarly.shouldEscalate &&
+      (escEarly.mode === 'transfer' || detected.handler === 'escalation')
+    ) {
       return this.escalateNow(pack, input, session, state, escEarly.primaryReason);
     }
 
-    if (detected.handler === 'workflow' && intentDef?.workflowId) {
+    if (detected.handler === 'workflow' && features.workflows && intentDef?.workflowId) {
       const def = resolveWorkflow(pack, input, intentDef.workflowId);
       if (def) {
         return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
       }
     }
 
-    if (detected.handler === 'tool' && intentDef?.toolId && pack.tools[intentDef.toolId]) {
+    if (detected.handler === 'tool' && features.tools && intentDef?.toolId && pack.tools[intentDef.toolId]) {
       const toolDef = pack.tools[intentDef.toolId]!;
       if (toolDef.requireAuth && !input.customerAuthToken) {
         const portal = getPortalUrls(pack, this.svc.env);
@@ -590,6 +657,7 @@ export class ConversationPipeline {
   ): Promise<TurnResponse | null> {
     const agent = this.svc.config.getAgent(pack, input.agentId);
     if (!agent) return null;
+    const features = tenantFeatures(pack);
 
     const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4);
 
@@ -607,6 +675,7 @@ export class ConversationPipeline {
     });
 
     const answer = await this.svc.ai.answerFromKnowledge(hits, input.message, llmMessages, {
+      agent,
       customerName: state.slots.contact_name,
       priorIntent: state.activeIntent,
     });
@@ -629,11 +698,12 @@ export class ConversationPipeline {
       confidenceThreshold: agent.confidenceThreshold,
       policy: pack.policies.escalation,
       intent: detected.intent,
+      agentFailureThreshold: agent.escalationFailureThreshold,
     });
 
-    if (escLate.shouldEscalate && escLate.mode === 'offer') {
+    if (features.escalation && escLate.shouldEscalate && escLate.mode === 'offer') {
       message += `\n\n${pack.policies.escalation.offerPhrases[0] ?? 'Would you like a human agent?'}`;
-    } else if (escLate.shouldEscalate && escLate.mode === 'transfer') {
+    } else if (features.escalation && escLate.shouldEscalate && escLate.mode === 'transfer') {
       return this.escalateNow(pack, input, session, state, escLate.primaryReason, message);
     }
 

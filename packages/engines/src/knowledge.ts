@@ -2,6 +2,8 @@ import type { KnowledgeHit } from '@agent-platform/domain';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { readJsonFile, writeJsonFile, ensureDir } from './file-store.js';
+import { sanitizeTenantId } from './security.js';
 
 export interface KnowledgeChunk {
   id: string;
@@ -379,6 +381,16 @@ export class KnowledgeEngine {
     private readonly dataDir: string,
   ) {}
 
+  private chunksPath(tenantId: string): string {
+    const safe = sanitizeTenantId(tenantId) ?? tenantId;
+    return path.join(this.dataDir, 'indexes', `${safe}-chunks.json`);
+  }
+
+  private metaPath(tenantId: string): string {
+    const safe = sanitizeTenantId(tenantId) ?? tenantId;
+    return path.join(this.dataDir, 'indexes', `${safe}.json`);
+  }
+
   async reindexTenant(tenantId: string, knowledgeDir: string): Promise<{ chunks: number; qaPairs: number }> {
     const files = await listMarkdown(knowledgeDir);
     const all: KnowledgeChunk[] = [];
@@ -387,22 +399,39 @@ export class KnowledgeEngine {
       all.push(...splitMarkdown(raw, tenantId, path.basename(file)));
     }
     await this.index.upsert(tenantId, all);
-    await fs.mkdir(path.join(this.dataDir, 'indexes'), { recursive: true });
+    await ensureDir(path.join(this.dataDir, 'indexes'));
     const qaPairs = all.filter((c) => c.kind === 'qa').length;
-    await fs.writeFile(
-      path.join(this.dataDir, 'indexes', `${tenantId}.json`),
-      JSON.stringify({ tenantId, chunks: all.length, qaPairs, updatedAt: new Date().toISOString() }, null, 2),
-    );
+    const meta = { tenantId, chunks: all.length, qaPairs, updatedAt: new Date().toISOString() };
+    await writeJsonFile(this.metaPath(tenantId), meta);
+    await writeJsonFile(this.chunksPath(tenantId), { tenantId, chunks: all });
     return { chunks: all.length, qaPairs };
   }
 
+  async loadPersistedIndex(tenantId: string): Promise<boolean> {
+    const data = await readJsonFile<{ chunks?: KnowledgeChunk[] }>(this.chunksPath(tenantId));
+    if (!data?.chunks?.length) return false;
+    await this.index.upsert(tenantId, data.chunks);
+    return true;
+  }
+
   async loadPersistedMeta(tenantId: string): Promise<boolean> {
-    void tenantId;
-    return false;
+    return this.loadPersistedIndex(tenantId);
   }
 
   async search(tenantId: string, query: string, limit = 4): Promise<KnowledgeHit[]> {
     return this.index.search(tenantId, query, limit);
+  }
+
+  async listTenantIdsFromDisk(): Promise<string[]> {
+    const dir = path.join(this.dataDir, 'indexes');
+    try {
+      const files = await fs.readdir(dir);
+      return files
+        .filter((f) => f.endsWith('-chunks.json'))
+        .map((f) => f.replace(/-chunks\.json$/, ''));
+    } catch {
+      return [];
+    }
   }
 }
 

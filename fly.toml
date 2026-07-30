@@ -1,0 +1,45 @@
+# Fly.io — ACOCAM chatbot API
+# Guide: docs/DEPLOY_FLYIO.md
+# Secrets (keys, CORS, logistics URL): fly secrets set — not in this file
+
+app = 'acocam-chatbot-api'
+primary_region = 'yyz'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  NODE_ENV = 'production'
+  HOST = '0.0.0.0'
+  TRUST_PROXY = 'true'
+  TENANTS_DIR = './tenants'
+  DATA_DIR = './data'
+  AI_PROVIDER = 'null'
+  PERSIST_SESSIONS = 'true'
+  PERSIST_ANALYTICS = 'true'
+  PERSIST_ESCALATIONS = 'true'
+  JWT_VALIDATE_EXP = 'true'
+  RATE_LIMIT_PER_MINUTE = '120'
+  MAX_MESSAGE_LENGTH = '4000'
+  TOOL_TIMEOUT_MS = '20000'
+  DEFAULT_COUNTRY = 'Canada'
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '60s'
+    interval = '30s'
+    method = 'GET'
+    path = '/v1/health'
+    timeout = '10s'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

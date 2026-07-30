@@ -2,6 +2,19 @@
 
 Reusable multi-tenant AI agent platform. ACOCAM is Tenant #1.
 
+## Go live (ACOCAM + main website)
+
+See **[docs/GO_LIVE.md](docs/GO_LIVE.md)** for production deploy, WordPress embed, and checklist. **Render without Docker:** [docs/RENDER_NO_DOCKER.md](docs/RENDER_NO_DOCKER.md) — GitHub + Render builds for you.
+
+Quick local production test:
+
+```powershell
+copy env.production.example .env
+# edit .env with live keys and URLs
+npm run check:prod
+npm run start:prod
+```
+
 ## Quick start
 
 ```bash
@@ -10,6 +23,8 @@ cp .env.example .env
 npm run reindex
 npm run dev
 ```
+
+`npm run dev` builds the embed SDK automatically, then starts the API on port 8787.
 
 Open [examples/embed-demo.html](examples/embed-demo.html) or visit `http://localhost:8787/demo` (root `/` redirects there).
 

@@ -9,6 +9,7 @@ import type {
 } from '@agent-platform/domain';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { sanitizeTenantId } from './security.js';
 
 export interface TenantPack {
   settings: TenantSettings;
@@ -41,7 +42,10 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (err) {
+    if (process.env.CONFIG_DEBUG === 'true') {
+      console.warn('[config] read failed:', filePath, err instanceof Error ? err.message : err);
+    }
     return fallback;
   }
 }
@@ -84,6 +88,36 @@ async function loadTools(dir: string): Promise<Record<string, ToolDefinition>> {
   return out;
 }
 
+function resolveTenantKeys(tenantId: string, settings: TenantSettings): TenantSettings {
+  const prefix = tenantId.toUpperCase().replace(/-/g, '_');
+  const env = process.env;
+  return {
+    ...settings,
+    publishableKey:
+      env[`${prefix}_PUBLISHABLE_KEY`]?.trim() ||
+      env.TENANT_PUBLISHABLE_KEY?.trim() ||
+      settings.publishableKey,
+    secretKey:
+      env[`${prefix}_SECRET_KEY`]?.trim() ||
+      env.TENANT_SECRET_KEY?.trim() ||
+      settings.secretKey,
+    apiBaseUrl:
+      env[`${prefix}_API_BASE_URL`]?.trim() ||
+      env.ACOCAM_API_BASE_URL?.trim() ||
+      settings.apiBaseUrl,
+  };
+}
+
+function validatePack(pack: TenantPack): void {
+  const warnings: string[] = [];
+  if (!pack.settings.publishableKey) warnings.push('missing publishableKey');
+  if (!pack.intents.length) warnings.push('no intents loaded');
+  if (!Object.keys(pack.workflows).length) warnings.push('no workflows loaded');
+  if (warnings.length && process.env.CONFIG_DEBUG !== 'false') {
+    console.warn(`[config] ${pack.settings.tenantId}:`, warnings.join(', '));
+  }
+}
+
 export class ConfigEngine {
   constructor(private readonly tenantsRoot: string) {}
 
@@ -93,17 +127,21 @@ export class ConfigEngine {
   }
 
   async load(tenantId: string): Promise<TenantPack> {
-    const cached = cache.get(tenantId);
+    const safeId = sanitizeTenantId(tenantId);
+    if (!safeId) throw new Error(`Invalid tenant id: ${tenantId}`);
+
+    const cached = cache.get(safeId);
     if (cached) return cached;
 
-    const rootDir = path.join(this.tenantsRoot, tenantId);
-    const settings = await readJson<TenantSettings>(path.join(rootDir, 'settings.json'), {
-      tenantId,
-      name: tenantId,
+    const rootDir = path.join(this.tenantsRoot, safeId);
+    const rawSettings = await readJson<TenantSettings>(path.join(rootDir, 'settings.json'), {
+      tenantId: safeId,
+      name: safeId,
       publishableKey: '',
       secretKey: '',
       agents: [],
     });
+    const settings = resolveTenantKeys(safeId, rawSettings);
 
     const branding = await readJson<BrandingPack>(path.join(rootDir, 'branding', 'theme.json'), {
       theme: {
@@ -149,7 +187,8 @@ export class ConfigEngine {
       rootDir,
     };
 
-    cache.set(tenantId, pack);
+    cache.set(safeId, pack);
+    validatePack(pack);
     return pack;
   }
 

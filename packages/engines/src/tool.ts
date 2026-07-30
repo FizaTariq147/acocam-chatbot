@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolResult } from '@agent-platform/domain';
+import { isDevMode, sanitizeUserFacingError } from './security.js';
 
 export interface PortalUrls {
   loginUrl: string;
@@ -104,7 +105,7 @@ function interpolate(template: string, slots: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => encodeURIComponent(slots[key] ?? ''));
 }
 
-function splitLocation(text: string): { city: string; country: string; address: string } {
+function splitLocation(text: string, defaultCountry = 'Canada'): { city: string; country: string; address: string } {
   const trimmed = text.trim();
   const parts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
   if (parts.length >= 2) {
@@ -114,19 +115,19 @@ function splitLocation(text: string): { city: string; country: string; address: 
       address: trimmed,
     };
   }
-  return { city: trimmed, country: 'Canada', address: trimmed };
+  return { city: trimmed, country: defaultCountry, address: trimmed };
 }
 
-function enrichQuoteSlots(slots: Record<string, string>): Record<string, string> {
+function enrichQuoteSlots(slots: Record<string, string>, defaultCountry = 'Canada'): Record<string, string> {
   const out = { ...slots };
   if (slots.origin) {
-    const o = splitLocation(slots.origin);
+    const o = splitLocation(slots.origin, defaultCountry);
     out.origin_city = o.city;
     out.origin_country = o.country;
     if (!out.origin) out.origin = o.address;
   }
   if (slots.destination) {
-    const d = splitLocation(slots.destination);
+    const d = splitLocation(slots.destination, defaultCountry);
     out.destination_city = d.city;
     out.destination_country = d.country;
     if (!out.destination) out.destination = d.address;
@@ -315,9 +316,10 @@ export class ToolEngine {
       return { ok: false, error: resolved.error };
     }
     const { baseUrl, baseEnv } = resolved;
+    const defaultCountry = ctx.env.DEFAULT_COUNTRY ?? ctx.env.ACOCAM_DEFAULT_COUNTRY ?? 'Canada';
 
     let path = def.path;
-    let slots = enrichQuoteSlots({ ...(ctx.slots ?? {}) });
+    let slots = enrichQuoteSlots({ ...(ctx.slots ?? {}) }, defaultCountry);
     if (def.inputFrom) {
       for (const [param, slotKey] of Object.entries(def.inputFrom)) {
         slots[param] = slots[slotKey] ?? slots[param] ?? '';
@@ -393,6 +395,8 @@ export class ToolEngine {
 
   formatResult(def: ToolDefinition, result: ToolResult, ctx?: ToolRuntimeContext): string {
     const slots = ctx?.slots;
+    const devMode = isDevMode(ctx?.env);
+    const errText = sanitizeUserFacingError(result.error, devMode);
     if (result.authRequired) {
       return loginPrompt(ctx?.portal);
     }
@@ -413,7 +417,7 @@ export class ToolEngine {
           ].join(' ');
         }
         return [
-          `I could not look up that shipment right now${result.error ? ` (${result.error})` : ''}.`,
+          `I could not look up that shipment right now${errText ? ` (${errText})` : ''}.`,
           'Please confirm the tracking / file number, try [Track Now](https://acocamtrading.ca/), or ask to speak with a human agent.',
         ].join(' ');
       }
@@ -424,11 +428,11 @@ export class ToolEngine {
         const isBooking = slots?.bookingIntent === 'true';
         const action = isBooking ? 'shipment booking' : 'quotation request';
         return [
-          `I could not submit your ${action}${result.error ? ` (${result.error})` : ''}.`,
+          `I could not submit your ${action}${errText ? ` (${errText})` : ''}.`,
           `Please sign in at [acocamtrading.ca/login](${ctx?.portal?.loginUrl ?? 'https://acocamtrading.ca/login'}) or [get a quote online](${ctx?.portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/'}), then try again. You can also ask for a human agent.`,
         ].join(' ');
       }
-      return `I could not complete **${def.label}** right now${result.error ? `: ${result.error}` : '.'} Would you like a human agent instead?`;
+      return `I could not complete **${def.label}** right now${errText ? `: ${errText}` : '.'} Would you like a human agent instead?`;
     }
     if (def.id === 'track_shipment') {
       const fallback = slots?.trackingNumber || 'your shipment';

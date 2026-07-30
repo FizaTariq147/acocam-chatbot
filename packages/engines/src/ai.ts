@@ -1,4 +1,4 @@
-import type { KnowledgeHit, LlmMessage, LlmResult } from '@agent-platform/domain';
+import type { AgentSettings, KnowledgeHit, LlmMessage, LlmResult } from '@agent-platform/domain';
 import { acocamHumanFallback, humanizeRetrievedAnswer } from './response-style.js';
 
 export interface AiProvider {
@@ -86,17 +86,28 @@ function formatHitAnswer(hit: KnowledgeHit): string {
 }
 
 export class AiEngine {
-  constructor(private provider: AiProvider) {}
+  constructor(
+    private provider: AiProvider,
+    private readonly env: NodeJS.ProcessEnv = process.env,
+  ) {}
 
   setProvider(provider: AiProvider): void {
     this.provider = provider;
+  }
+
+  providerForAgent(agent?: AgentSettings): AiProvider {
+    return agent ? createAiProviderFromEnv(this.env, agent) : this.provider;
   }
 
   async answerFromKnowledge(
     hits: KnowledgeHit[],
     userMessage: string,
     llmMessages?: LlmMessage[],
-    style?: { customerName?: string; priorIntent?: string | null },
+    opts?: {
+      agent?: AgentSettings;
+      customerName?: string;
+      priorIntent?: string | null;
+    },
   ): Promise<{
     message: string;
     source: string;
@@ -106,7 +117,7 @@ export class AiEngine {
     if (!hits.length) {
       const fallback = acocamHumanFallback(userMessage);
       return {
-        message: style?.customerName ? `${style.customerName} — ${fallback}` : fallback,
+        message: opts?.customerName ? `${opts.customerName} — ${fallback}` : fallback,
         source: 'assistant',
         confidence: 0.62,
         citations: [],
@@ -116,9 +127,10 @@ export class AiEngine {
     const top = hits[0]!;
     const citations = hits.slice(0, 3).map((h) => ({ id: h.id, title: h.heading || h.title, score: h.score }));
 
+    const provider = this.providerForAgent(opts?.agent);
     const useLocalModel =
-      this.provider.name === 'local-finetuned' ||
-      this.provider.name === 'openai-compatible';
+      provider.name === 'local-finetuned' ||
+      provider.name === 'openai-compatible';
 
     // Strong KB hit → answer from knowledge directly (fast + accurate for FAQ).
     // Local model is only used for weaker paraphrases.
@@ -151,9 +163,9 @@ export class AiEngine {
       }
       if (message.length >= 1500) message += '…';
       if (!exactQuestionMatch) {
-        message = humanizeRetrievedAnswer(message, userMessage, style);
-      } else if (style?.customerName) {
-        message = `${style.customerName} — ${message}`;
+        message = humanizeRetrievedAnswer(message, userMessage, opts);
+      } else if (opts?.customerName) {
+        message = `${opts.customerName} — ${message}`;
       }
       return {
         message,
@@ -163,10 +175,10 @@ export class AiEngine {
       };
     }
 
-    const result = await this.provider.complete(llmMessages);
+    const result = await provider.complete(llmMessages);
     if (!result.ok || !result.content) {
       return {
-        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage, style),
+        message: humanizeRetrievedAnswer(formatHitAnswer(top).slice(0, 1200), userMessage, opts),
         source: 'knowledge',
         confidence: top.confidence,
         citations,
@@ -182,15 +194,16 @@ export class AiEngine {
   }
 }
 
-export function createAiProviderFromEnv(env: NodeJS.ProcessEnv): AiProvider {
-  const provider = (env.AI_PROVIDER ?? 'null').toLowerCase();
+export function createAiProviderFromEnv(env: NodeJS.ProcessEnv, agent?: AgentSettings): AiProvider {
+  const provider = (agent?.aiProvider ?? env.AI_PROVIDER ?? 'null').toLowerCase();
+  const model = agent?.aiModel ?? env.AI_MODEL ?? 'acocam-lora';
 
   // Local fine-tuned model served on your machine (no cloud LLM API).
   if (provider === 'local' || provider === 'local-finetuned') {
     return new OpenAiCompatibleProvider(
       env.AI_API_KEY || 'local',
       env.AI_BASE_URL ?? 'http://127.0.0.1:8090/v1',
-      env.AI_MODEL ?? 'acocam-lora',
+      model,
       'local-finetuned',
     );
   }
@@ -201,7 +214,7 @@ export function createAiProviderFromEnv(env: NodeJS.ProcessEnv): AiProvider {
     return new OpenAiCompatibleProvider(
       key,
       env.AI_BASE_URL ?? 'https://api.openai.com/v1',
-      env.AI_MODEL ?? 'gpt-4o-mini',
+      model,
     );
   }
   return new NullAiProvider();

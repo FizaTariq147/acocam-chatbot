@@ -7,13 +7,14 @@ No cloud LLM — runs on your machine at http://127.0.0.1:8090/v1
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import torch
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from peft import PeftModel
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -67,7 +68,7 @@ def load_tokenizer(base_model: str, adapter: str):
     ) from last_err
 
 
-def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
+def build_app(base_model: str, adapter: str, device: str, api_key: str | None = None) -> FastAPI:
     tokenizer = load_tokenizer(base_model, adapter)
     load_kwargs: dict[str, Any] = {
         "trust_remote_code": True,
@@ -87,6 +88,16 @@ def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
     model.eval()
 
     app = FastAPI(title="ACOCAM local fine-tuned model")
+    max_tokens_cap = int(os.environ.get("ML_MAX_TOKENS", "700"))
+
+    def require_auth(authorization: str | None = Header(default=None)) -> None:
+        if not api_key:
+            return
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing API key")
+        token = authorization[7:].strip()
+        if token != api_key:
+            raise HTTPException(status_code=401, detail="Invalid API key")
 
     def status() -> dict[str, Any]:
         return {
@@ -118,7 +129,12 @@ def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
         return status()
 
     @app.post("/v1/chat/completions")
-    def chat(req: ChatCompletionRequest) -> dict[str, Any]:
+    def chat(
+        req: ChatCompletionRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        require_auth(authorization)
+        capped_tokens = min(max(req.max_tokens, 1), max_tokens_cap)
         prompt = tokenizer.apply_chat_template(
             [m.model_dump() for m in req.messages],
             tokenize=False,
@@ -128,7 +144,7 @@ def build_app(base_model: str, adapter: str, device: str) -> FastAPI:
         with torch.no_grad():
             out = model.generate(
                 **inputs,
-                max_new_tokens=req.max_tokens,
+                max_new_tokens=capped_tokens,
                 do_sample=req.temperature > 0,
                 temperature=max(req.temperature, 0.01),
                 pad_token_id=tokenizer.eos_token_id,
@@ -199,8 +215,9 @@ def main() -> None:
             pass
 
     device = "cpu" if args.cpu or not torch.cuda.is_available() else "cuda"
+    ml_api_key = os.environ.get("ML_API_KEY", "").strip() or None
     print(f"Loading adapter {adapter} on {device}")
-    app = build_app(base_model, str(adapter), device)
+    app = build_app(base_model, str(adapter), device, ml_api_key)
     uvicorn.run(app, host=args.host, port=args.port)
 
 

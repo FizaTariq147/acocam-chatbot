@@ -1,14 +1,5 @@
 import type { WorkflowDefinition, WorkflowProgress, WorkflowStep } from '@agent-platform/domain';
-
-function looksLikeTrackingRef(value: string): boolean {
-  const v = value.trim();
-  if (v.length < 6) return false;
-  if (!/\d/.test(v)) return false;
-  if (/\s/.test(v) && !/^ACO[- ]?\d{4,}$/i.test(v)) return false;
-  const blocked = /^(shipment|shipping|track|tracking|book|quote|package|container|services?)$/i;
-  if (blocked.test(v)) return false;
-  return /^(?:ACO[- ]?\d{4,}|(?=[A-Z0-9-]*\d)[A-Z0-9-]{6,})$/i.test(v.replace(/\s+/g, ''));
-}
+import { looksLikeTrackingRef } from './tracking-ref.js';
 
 function validate(step: WorkflowStep, value: string): string | null {
   const v = value.trim();
@@ -30,6 +21,7 @@ function validate(step: WorkflowStep, value: string): string | null {
         ? null
         : 'Please enter a valid tracking or reference number (example: ACO-123456).';
     default:
+      if (v.length > 2000) return 'Please shorten your answer (2000 characters max).';
       return null;
   }
 }

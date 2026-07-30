@@ -4,8 +4,10 @@ dist/
 *.tsbuildinfo
 .env
 .env.example
+.env.production
+.env.production.local
 .DS_Store
-data/indexes/
+data/
 *.log
 .venv-ml/
 ml/data/*.jsonl

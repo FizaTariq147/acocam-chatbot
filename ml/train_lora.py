@@ -286,7 +286,11 @@ def main() -> None:
         return encoded
 
     raw = load_dataset("json", data_files=str(data_path), split="train")
-    ds = raw.map(tokenize_row, remove_columns=raw.column_names)
+    split = raw.train_test_split(test_size=0.1, seed=42)
+    train_raw = split["train"]
+    eval_raw = split["test"]
+    ds = train_raw.map(tokenize_row, remove_columns=train_raw.column_names)
+    eval_ds = eval_raw.map(tokenize_row, remove_columns=eval_raw.column_names)
 
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -306,6 +310,8 @@ def main() -> None:
         "dataloader_pin_memory": not use_cpu,
         # 0.5B + fp16 fits in ~2GB; checkpointing saves RAM but is very slow on CPU.
         "gradient_checkpointing": use_cpu and not args.small,
+        "eval_strategy": "epoch",
+        "logging_strategy": "epoch",
     }
     if args.max_steps > 0:
         train_kwargs["max_steps"] = args.max_steps
@@ -320,11 +326,14 @@ def main() -> None:
         model=model,
         args=training_args,
         train_dataset=ds,
+        eval_dataset=eval_ds,
         data_collator=collator,
         processing_class=tokenizer,
     )
 
     trainer.train()
+    metrics = trainer.evaluate()
+    print("Eval metrics:", metrics)
     trainer.model.save_pretrained(str(out_path))
     tokenizer.save_pretrained(str(out_path))
 
@@ -333,6 +342,8 @@ def main() -> None:
         "adapter_path": str(out_path),
         "data": str(data_path),
         "rows": line_count,
+        "eval_rows": len(eval_raw),
+        "eval_loss": metrics.get("eval_loss"),
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "grad_accum": args.grad_accum,
