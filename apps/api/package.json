@@ -9,7 +9,8 @@
     "prestart": "npm run build -w @agent-platform/sdk-js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "reindex": "tsx src/reindex.ts",
+    "reindex": "node dist/reindex.js",
+    "reindex:dev": "tsx src/reindex.ts",
     "reindex:prod": "node dist/reindex.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
