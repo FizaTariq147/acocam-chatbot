@@ -8,7 +8,7 @@ services:
     runtime: node
     plan: free
     region: ohio
-    buildCommand: npm install --include=dev && npm run build:render
+    buildCommand: npm install && npm run build:render
     startCommand: node apps/api/dist/index.js
     healthCheckPath: /v1/health
     autoDeploy: true
