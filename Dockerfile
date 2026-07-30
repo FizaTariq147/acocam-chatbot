@@ -45,5 +45,6 @@ COPY tenants ./tenants
 
 EXPOSE 8787
 
-# Render/Fly set PORT at runtime; app reads process.env.PORT (default 8787).
+# Hugging Face Spaces: set PORT=7860 in Space variables (app_port: 7860 in README YAML).
+# Render/Fly: default PORT 8787 or platform-injected PORT.
 CMD ["node", "apps/api/dist/index.js"]
