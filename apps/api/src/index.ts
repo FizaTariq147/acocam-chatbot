@@ -59,6 +59,20 @@ async function main() {
     };
   });
 
+  app.get('/v1', async () => ({
+    ok: true,
+    service: 'ai-agent-platform',
+    version: 'v1',
+    message: 'ACOCAM chatbot API — use the paths below (this URL is the base for the embed widget).',
+    links: {
+      health: '/v1/health',
+      demo: '/demo',
+      embedScript: '/embed/agent-embed.js',
+      publicConfig: '/v1/tenants/acocam/agents/customer-support/config/public',
+      createSession: 'POST /v1/tenants/acocam/agents/customer-support/sessions',
+    },
+  }));
+
   app.get('/demo', async (_req, reply) => {
     const pubKey =
       process.env.ACOCAM_PUBLISHABLE_KEY?.trim() ||
