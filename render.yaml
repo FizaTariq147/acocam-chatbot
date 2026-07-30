@@ -1,0 +1,59 @@
+# Render Blueprint — FREE tier chatbot API (Step 1 go-live)
+# Use when connecting this repo to Render via GitHub/GitLab/Bitbucket.
+# Without Git: build/push Dockerfile to Docker Hub, then "Deploy an existing image" in Render.
+# Docs: docs/DEPLOY_STEP1_FREE.md
+
+services:
+  - type: web
+    name: acocam-chatbot-api
+    runtime: docker
+    plan: free
+    region: ohio
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /v1/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "true"
+      - key: TENANTS_DIR
+        value: ./tenants
+      - key: DATA_DIR
+        value: ./data
+      - key: AI_PROVIDER
+        value: "null"
+      - key: PERSIST_SESSIONS
+        value: "true"
+      - key: PERSIST_ANALYTICS
+        value: "true"
+      - key: PERSIST_ESCALATIONS
+        value: "true"
+      - key: JWT_VALIDATE_EXP
+        value: "true"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: MAX_MESSAGE_LENGTH
+        value: "4000"
+      - key: TOOL_TIMEOUT_MS
+        value: "20000"
+      - key: DEFAULT_COUNTRY
+        value: Canada
+      # --- Set these in Render Dashboard (Environment) before go-live ---
+      - key: ACOCAM_PUBLISHABLE_KEY
+        sync: false
+      - key: ACOCAM_SECRET_KEY
+        sync: false
+      - key: ACOCAM_API_BASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ACOCAM_PORTAL_LOGIN_URL
+        sync: false
+      - key: ACOCAM_PORTAL_SIGNUP_URL
+        sync: false
+      - key: ACOCAM_PORTAL_QUOTE_URL
+        sync: false

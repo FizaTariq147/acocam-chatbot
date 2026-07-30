@@ -60,6 +60,10 @@ async function main() {
   });
 
   app.get('/demo', async (_req, reply) => {
+    const pubKey =
+      process.env.ACOCAM_PUBLISHABLE_KEY?.trim() ||
+      process.env.TENANT_PUBLISHABLE_KEY?.trim() ||
+      'pk_acocam_demo';
     const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><title>Agent Embed Demo</title></head>
 <body style="font-family:Georgia,serif;padding:2rem;background:#f8fafc">
@@ -68,7 +72,7 @@ async function main() {
   <script src="/embed/agent-embed.js"
     data-tenant="acocam"
     data-agent="customer-support"
-    data-key="pk_acocam_demo"
+    data-key="${pubKey.replace(/"/g, '&quot;')}"
     data-api="/v1"></script>
 </body></html>`;
     return reply.type('text/html').send(html);
@@ -264,6 +268,16 @@ async function main() {
 
   const port = Number(process.env.PORT ?? 8787);
   const host = process.env.HOST ?? '0.0.0.0';
+
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.CORS_ORIGIN?.trim()) {
+      app.log.warn('Production: set CORS_ORIGIN to https://acocamtrading.ca (and www) before public launch.');
+    }
+    const pub = process.env.ACOCAM_PUBLISHABLE_KEY || '';
+    if (!pub || pub.includes('demo')) {
+      app.log.warn('Production: set ACOCAM_PUBLISHABLE_KEY to a live key (not pk_acocam_demo).');
+    }
+  }
 
   // Boot-time knowledge bootstrap for all tenants
   try {

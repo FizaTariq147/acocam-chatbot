@@ -31,12 +31,13 @@ loadEnvFile();
 const base = (process.env.ACOCAM_API_BASE_URL || 'http://localhost:3019').replace(/\/$/, '');
 const healthUrl = `${base}/api/health`;
 const trackUrl = `${base}/api/shipments/track/TEST-000000`;
+const timeoutMs = Number(process.env.ACOCAM_API_CHECK_TIMEOUT_MS ?? 20000);
 
 console.log(`ACOCAM logistics API base: ${base}`);
 console.log(`Health check: ${healthUrl}`);
 
 try {
-  const res = await fetch(healthUrl, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(healthUrl, { signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text();
   const html = /^\s*<!DOCTYPE html/i.test(text);
   if (html) {
@@ -63,7 +64,7 @@ try {
 }
 
 try {
-  const res = await fetch(trackUrl, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(trackUrl, { signal: AbortSignal.timeout(timeoutMs) });
   console.log(`Track probe: HTTP ${res.status} (${trackUrl})`);
   if (res.status === 401) {
     console.log('Note: Track endpoint returned 401 without JWT — log in on the website for full tracking, or confirm public track is enabled.');

@@ -1,0 +1,59 @@
+# Render Blueprint — Node (no local Docker)
+# Connect repo on render.com → New Blueprint → select this file
+# Or create Web Service manually — see docs/RENDER_NO_DOCKER.md
+
+services:
+  - type: web
+    name: acocam-chatbot-api
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm install && npm run build && npm run reindex
+    startCommand: node apps/api/dist/index.js
+    healthCheckPath: /v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "true"
+      - key: TENANTS_DIR
+        value: ./tenants
+      - key: DATA_DIR
+        value: ./data
+      - key: AI_PROVIDER
+        value: "null"
+      - key: PERSIST_SESSIONS
+        value: "true"
+      - key: PERSIST_ANALYTICS
+        value: "true"
+      - key: PERSIST_ESCALATIONS
+        value: "true"
+      - key: JWT_VALIDATE_EXP
+        value: "true"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: MAX_MESSAGE_LENGTH
+        value: "4000"
+      - key: TOOL_TIMEOUT_MS
+        value: "20000"
+      - key: DEFAULT_COUNTRY
+        value: Canada
+      - key: ACOCAM_PUBLISHABLE_KEY
+        sync: false
+      - key: ACOCAM_SECRET_KEY
+        sync: false
+      - key: ACOCAM_API_BASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ACOCAM_PORTAL_LOGIN_URL
+        sync: false
+      - key: ACOCAM_PORTAL_SIGNUP_URL
+        sync: false
+      - key: ACOCAM_PORTAL_QUOTE_URL
+        sync: false

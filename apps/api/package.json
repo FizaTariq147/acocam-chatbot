@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "predev": "npm run build -w @agent-platform/sdk-js",
+    "prestart": "npm run build -w @agent-platform/sdk-js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "reindex": "tsx src/reindex.ts",

@@ -1,0 +1,67 @@
+# nginx reverse proxy — chat-api.acocamtrading.ca → local chatbot API (8787)
+#
+# Install on VPS (Ubuntu/Debian example):
+#   sudo cp deploy/nginx-chat-api.conf.example /etc/nginx/sites-available/chat-api.acocamtrading.ca
+#   sudo ln -s /etc/nginx/sites-available/chat-api.acocamtrading.ca /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# SSL: use Certbot after DNS A record points to this server:
+#   sudo certbot --nginx -d chat-api.acocamtrading.ca
+#
+# Required in server .env when behind this proxy:
+#   TRUST_PROXY=true
+#   HOST=127.0.0.1
+#   PORT=8787
+
+upstream acocam_chat_api {
+    server 127.0.0.1:8787;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name chat-api.acocamtrading.ca;
+
+    # Certbot will add HTTPS redirect; uncomment after SSL is live:
+    # return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name chat-api.acocamtrading.ca;
+
+    # Certbot fills these paths (example):
+    # ssl_certificate     /etc/letsencrypt/live/chat-api.acocamtrading.ca/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/chat-api.acocamtrading.ca/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf;
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 64k;
+
+    location / {
+        proxy_pass http://acocam_chat_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    # Optional: longer timeout for SSE streaming endpoint
+    location ~ ^/v1/tenants/.+/stream$ {
+        proxy_pass http://acocam_chat_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }
+}
