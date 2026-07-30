@@ -48,7 +48,7 @@ If you already have a remote, use your existing branch name instead of `main`.
 | **Region** | Ohio (or nearest) |
 | **Branch** | `main` (or your branch) |
 | **Runtime** | **Node** |
-| **Build Command** | `npm install && npm run build && npm run reindex` |
+| **Build Command** | `npm install --include=dev && npm run build:render` |
 | **Start Command** | `node apps/api/dist/index.js` |
 | **Instance type** | **Free** |
 | **Health Check Path** | `/v1/health` |

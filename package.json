@@ -9,8 +9,10 @@
     "build": "npm run build -w @agent-platform/domain -w @agent-platform/engines -w @agent-platform/application -w @agent-platform/sdk-js -w @agent-platform/api",
     "dev": "npm run dev -w @agent-platform/api",
     "start": "npm run start -w @agent-platform/api",
-    "start:prod": "npm run build && npm run reindex && npm run start",
+    "start:prod": "npm run build && npm run reindex:prod && npm run start",
     "reindex": "npm run reindex -w @agent-platform/api",
+    "reindex:prod": "node apps/api/dist/reindex.js",
+    "build:render": "npm run build && npm run reindex:prod",
     "check:acocam-api": "node scripts/check-acocam-api.mjs",
     "check:local": "node scripts/check-local.mjs",
     "check:prod": "node scripts/check-production-ready.mjs",
@@ -26,5 +28,11 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
   }
 }
