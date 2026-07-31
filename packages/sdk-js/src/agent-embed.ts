@@ -12,6 +12,7 @@ type PublicConfig = {
     position: 'bottom-right' | 'bottom-left';
     launcherLabel: string;
     logoUrl?: string;
+    greetingMessage?: string;
   };
   actions: Array<{ id: string; label: string; url?: string }>;
 };
@@ -393,11 +394,18 @@ type TurnResponse = {
     const textDark = '#0f172a';
     const style = el('style', {}, [
       `
-      .aap-root{position:fixed;bottom:110px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4;display:flex;flex-direction:column;align-items:${align}}
+      .aap-root{position:fixed;bottom:150px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4;display:flex;flex-direction:column;align-items:${align}}
       .aap-root *,.aap-root *::before,.aap-root *::after{box-sizing:border-box;font-family:${font}!important}
       .aap-launcher{align-self:${align};display:flex!important;align-items:center;justify-content:center;width:56px;height:56px;padding:0!important;background:${blue}!important;color:#fff!important;border:0!important;border-radius:50%!important;cursor:pointer;box-shadow:0 8px 24px rgba(3,74,118,.35)}
       .aap-launcher:hover{filter:brightness(1.08)}
       .aap-launcher svg{width:26px;height:26px;display:block;flex-shrink:0}
+      .aap-teaser{display:none;position:relative;width:min(330px,calc(100vw - 24px));background:#fff!important;color:${textDark}!important;border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 14px 38px rgba(15,23,42,.20);padding:16px 40px 16px 16px;margin-bottom:14px;font-size:14px!important;line-height:1.55;text-align:left;cursor:pointer}
+      .aap-teaser.show{display:block;animation:aap-teaser-in .32s cubic-bezier(.2,.8,.3,1) both}
+      .aap-teaser p{margin:0 0 10px}
+      .aap-teaser p:last-child{margin:0;font-weight:700;color:${blue}!important}
+      .aap-teaser-dismiss{position:absolute;top:8px;${isLeft ? 'right:8px' : 'right:8px'};width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:0!important;background:transparent!important;color:#64748b!important;font-size:20px;line-height:1;border-radius:50%;cursor:pointer;padding:0}
+      .aap-teaser-dismiss:hover{background:#f1f5f9!important;color:${textDark}!important}
+      @keyframes aap-teaser-in{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
       .aap-panel{display:none;width:min(380px,calc(100vw - 24px));height:460px;background:#fff!important;color:${textDark};border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(15,23,42,.25);flex-direction:column;margin-bottom:12px;border:1px solid #e2e8f0}
       .aap-panel.open{display:flex}
       .aap-header{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,${blue},${blueGradientEnd})!important;color:#fff!important;padding:12px 14px;font-weight:700;font-size:15px}
@@ -506,12 +514,51 @@ type TurnResponse = {
       title: launcherLabel,
     }) as HTMLButtonElement;
     launcher.appendChild(botIcon);
+
+    const greetingIntro =
+      cfg.theme.greetingMessage ||
+      '\u{1F44B} Hello and welcome to ACOCAM Trading Inc., your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation.';
+    const teaserDismiss = el('button', {
+      className: 'aap-teaser-dismiss',
+      type: 'button',
+      'aria-label': 'Dismiss welcome message',
+      title: 'Dismiss',
+    }, ['\u00d7']) as HTMLButtonElement;
+    const teaser = el('div', { className: 'aap-teaser', role: 'button', tabindex: '0' }, [
+      teaserDismiss,
+      el('p', {}, [greetingIntro]),
+      el('p', {}, ['How may I assist you today?']),
+    ]);
+
+    const hideTeaser = () => teaser.classList.remove('show');
     const setOpen = (next: boolean) => {
       open = next;
       panel.classList.toggle('open', open);
+      if (open) hideTeaser();
     };
+    const openFromTeaser = () => {
+      setOpen(true);
+      if (log.childNodes.length === 0) {
+        void typeAssistantMessage(log, cfg.welcome);
+        void ensureSession();
+      }
+      input.focus();
+    };
+    teaserDismiss.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideTeaser();
+    });
+    teaser.addEventListener('click', openFromTeaser);
+    teaser.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openFromTeaser();
+      }
+    });
+
     closeBtn.addEventListener('click', () => setOpen(false));
     launcher.addEventListener('click', () => {
+      hideTeaser();
       setOpen(!open);
       if (open && log.childNodes.length === 0) {
         void typeAssistantMessage(log, cfg.welcome);
@@ -540,8 +587,12 @@ type TurnResponse = {
       if (e.key === 'Enter') submit();
     });
 
-    const root = el('div', { className: 'aap-root' }, [panel, launcher]);
+    const root = el('div', { className: 'aap-root' }, [panel, teaser, launcher]);
     document.body.appendChild(root);
+
+    window.setTimeout(() => {
+      if (!open) teaser.classList.add('show');
+    }, 1200);
   }
 
   void (async () => {
