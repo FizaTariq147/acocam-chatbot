@@ -395,8 +395,10 @@ type TurnResponse = {
       `
       .aap-root{position:fixed;bottom:72px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4;display:flex;flex-direction:column;align-items:${align}}
       .aap-root *,.aap-root *::before,.aap-root *::after{box-sizing:border-box;font-family:${font}!important}
-      .aap-launcher{align-self:${align};background:${blue}!important;color:#fff!important;border:0!important;border-radius:999px;padding:12px 18px;cursor:pointer;box-shadow:0 8px 24px rgba(3,74,118,.35);font-weight:600;font-size:14px;white-space:nowrap}
-      .aap-panel{display:none;width:min(380px,calc(100vw - 24px));height:520px;background:#fff!important;color:${textDark};border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(15,23,42,.25);flex-direction:column;margin-bottom:12px;border:1px solid #e2e8f0}
+      .aap-launcher{align-self:${align};display:flex!important;align-items:center;justify-content:center;width:56px;height:56px;padding:0!important;background:${blue}!important;color:#fff!important;border:0!important;border-radius:50%!important;cursor:pointer;box-shadow:0 8px 24px rgba(3,74,118,.35)}
+      .aap-launcher:hover{filter:brightness(1.08)}
+      .aap-launcher svg{width:26px;height:26px;display:block;flex-shrink:0}
+      .aap-panel{display:none;width:min(380px,calc(100vw - 24px));height:460px;background:#fff!important;color:${textDark};border-radius:16px;overflow:hidden;box-shadow:0 18px 50px rgba(15,23,42,.25);flex-direction:column;margin-bottom:12px;border:1px solid #e2e8f0}
       .aap-panel.open{display:flex}
       .aap-header{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,${blue},${blueGradientEnd})!important;color:#fff!important;padding:12px 14px;font-weight:700;font-size:15px}
       .aap-header-title{flex:1;color:#fff!important;text-shadow:0 1px 2px rgba(0,0,0,.12)}
@@ -425,8 +427,9 @@ type TurnResponse = {
       .aap-form{display:flex;gap:8px;padding:10px;border-top:1px solid #e2e8f0;background:#fff!important}
       .aap-root .aap-form input{flex:1;border:1px solid #cbd5e1!important;border-radius:10px;padding:10px;background:#fff!important;color:${textDark}!important;font-size:14px!important;-webkit-text-fill-color:${textDark}!important}
       .aap-root .aap-form input::placeholder{color:#94a3b8!important;opacity:1!important;-webkit-text-fill-color:#94a3b8!important}
-      .aap-root .aap-form button{background:${blue}!important;color:#fff!important;border:0!important;border-radius:10px;padding:0 14px;cursor:pointer;font-size:14px;font-weight:600;min-width:56px}
-      .aap-root .aap-form button:disabled{opacity:.6;cursor:not-allowed}
+      .aap-root .aap-form button.aap-send{background:${blue}!important;color:#fff!important;border:0!important;border-radius:10px;padding:0!important;cursor:pointer;width:44px;min-width:44px;height:42px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+      .aap-root .aap-form button.aap-send svg{width:20px;height:20px;display:block}
+      .aap-root .aap-form button.aap-send:disabled{opacity:.6;cursor:not-allowed}
       `,
     ]);
     document.head.appendChild(style);
@@ -458,15 +461,51 @@ type TurnResponse = {
     const input = el('input', { type: 'text', placeholder: 'Type a message…' }) as HTMLInputElement;
     input.style.setProperty('background', '#ffffff', 'important');
     input.style.setProperty('color', '#0f172a', 'important');
-    const sendBtn = el('button', { type: 'button' }, ['Send']) as HTMLButtonElement;
+
+    const sendIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    sendIcon.setAttribute('viewBox', '0 0 24 24');
+    sendIcon.setAttribute('aria-hidden', 'true');
+    sendIcon.setAttribute('fill', 'currentColor');
+    // Paper-plane send icon
+    sendIcon.innerHTML = '<path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/>';
+
+    const sendBtn = el('button', {
+      type: 'button',
+      className: 'aap-send',
+      'aria-label': 'Send message',
+      title: 'Send',
+    }) as HTMLButtonElement;
+    sendBtn.appendChild(sendIcon);
     sendBtn.style.setProperty('background', 'rgb(3,74,118)', 'important');
     sendBtn.style.setProperty('color', '#ffffff', 'important');
     const form = el('div', { className: 'aap-form' }, [input, sendBtn]);
     panel.appendChild(form);
 
-    const launcher = el('button', { className: 'aap-launcher', type: 'button' }, [
-      cfg.theme.launcherLabel || 'Chat',
-    ]);
+    const botIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    botIcon.setAttribute('viewBox', '0 0 24 24');
+    botIcon.setAttribute('aria-hidden', 'true');
+    botIcon.setAttribute('fill', 'none');
+    botIcon.setAttribute('stroke', 'currentColor');
+    botIcon.setAttribute('stroke-width', '1.75');
+    botIcon.setAttribute('stroke-linecap', 'round');
+    botIcon.setAttribute('stroke-linejoin', 'round');
+    // Polished assistant mark: soft chat bubble + typing dots + AI spark
+    botIcon.innerHTML = [
+      '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>',
+      '<circle cx="8.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
+      '<circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
+      '<circle cx="15.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
+      '<path d="m18.2 3.8.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55z" fill="currentColor" stroke="none"/>',
+    ].join('');
+
+    const launcherLabel = cfg.theme.launcherLabel || 'Chat with ACOCAM';
+    const launcher = el('button', {
+      className: 'aap-launcher',
+      type: 'button',
+      'aria-label': launcherLabel,
+      title: launcherLabel,
+    }) as HTMLButtonElement;
+    launcher.appendChild(botIcon);
     const setOpen = (next: boolean) => {
       open = next;
       panel.classList.toggle('open', open);
