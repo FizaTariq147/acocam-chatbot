@@ -393,7 +393,7 @@ type TurnResponse = {
     const textDark = '#0f172a';
     const style = el('style', {}, [
       `
-      .aap-root{position:fixed;bottom:72px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4;display:flex;flex-direction:column;align-items:${align}}
+      .aap-root{position:fixed;bottom:110px;${pos};z-index:99999;font-family:${font}!important;line-height:1.4;display:flex;flex-direction:column;align-items:${align}}
       .aap-root *,.aap-root *::before,.aap-root *::after{box-sizing:border-box;font-family:${font}!important}
       .aap-launcher{align-self:${align};display:flex!important;align-items:center;justify-content:center;width:56px;height:56px;padding:0!important;background:${blue}!important;color:#fff!important;border:0!important;border-radius:50%!important;cursor:pointer;box-shadow:0 8px 24px rgba(3,74,118,.35)}
       .aap-launcher:hover{filter:brightness(1.08)}
@@ -486,16 +486,16 @@ type TurnResponse = {
     botIcon.setAttribute('aria-hidden', 'true');
     botIcon.setAttribute('fill', 'none');
     botIcon.setAttribute('stroke', 'currentColor');
-    botIcon.setAttribute('stroke-width', '1.75');
+    botIcon.setAttribute('stroke-width', '1.9');
     botIcon.setAttribute('stroke-linecap', 'round');
     botIcon.setAttribute('stroke-linejoin', 'round');
-    // Polished assistant mark: soft chat bubble + typing dots + AI spark
+    // Support headset mark — reads as a live customer-service assistant
     botIcon.innerHTML = [
-      '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>',
-      '<circle cx="8.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
-      '<circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
-      '<circle cx="15.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
-      '<path d="m18.2 3.8.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55z" fill="currentColor" stroke="none"/>',
+      '<path d="M4 12.5a8 8 0 0 1 16 0"/>',
+      '<path d="M3.4 13h2.1a1.5 1.5 0 0 1 1.5 1.5v3.2a1.5 1.5 0 0 1-1.5 1.5H5a1.6 1.6 0 0 1-1.6-1.6z"/>',
+      '<path d="M20.6 13h-2.1a1.5 1.5 0 0 0-1.5 1.5v3.2a1.5 1.5 0 0 0 1.5 1.5h.5a1.6 1.6 0 0 0 1.6-1.6z"/>',
+      '<path d="M20.6 18.2v.6a3.2 3.2 0 0 1-3.2 3.2h-3.9"/>',
+      '<circle cx="12.4" cy="22" r="1.15" fill="currentColor" stroke="none"/>',
     ].join('');
 
     const launcherLabel = cfg.theme.launcherLabel || 'Chat with ACOCAM';
