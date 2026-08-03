@@ -113,11 +113,26 @@ function looksLikeFaqQuestion(message: string): boolean {
   );
 }
 
+/** Common greeting typos / elongations: hyy, heyy, hiii, helllo, helo, etc. */
+function looksLikeGreetingTypo(token: string): boolean {
+  const t = token
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[!?.…]+$/g, '');
+  if (!t || t.length > 16) return false;
+  return /^(h+i+y*a*|h+e+y+|h+y+|h+e+l+o+|y+o+|h+o+l+a+|s+a+l+u+t+|c+o+u+c+o+u+|b+o+n+j+o+u+r+|b+o+n+s+o+i+r+)$/.test(
+    t,
+  );
+}
+
 function looksLikeGreeting(message: string): boolean {
   const m = normalizeShortMessage(message);
   if (!m || m.length > 80) return false;
   const norm = m.normalize('NFD').replace(/\p{M}/gu, '');
-  return /^(hi|hello|hey|hola|bonjour|salut|bonsoir|coucou|allo|allô|bonne journee|bonne journée|good\s*(morning|afternoon|evening|day)|greetings|howdy|yo|salam|assalamu\s*alaikum|hiya|helo|hii+|helloo+|comment ca va|comment allez vous|ca va|hi there|hello there|nice to meet|pleased to meet|good to see|are you there|anyone there|enchanté|enchantee|ravi de vous parler)\b/.test(
+  if (looksLikeGreetingTypo(norm.split(/\s+/)[0] ?? '')) return true;
+  return /^(hi|hello|hey|hola|bonjour|salut|bonsoir|coucou|allo|allô|bonne journee|bonne journée|good\s*(morning|afternoon|evening|day)|greetings|howdy|yo|salam|assalamu\s*alaikum|hiya|helo|hii+|hyy+|heyy+|helloo+|comment ca va|comment allez vous|ca va|hi there|hello there|nice to meet|pleased to meet|good to see|are you there|anyone there|enchanté|enchantee|ravi de vous parler)\b/.test(
     norm,
   );
 }
@@ -154,9 +169,9 @@ function isPureGreetingMessage(message: string): boolean {
   if (looksLikeTransactional(m) || looksLikeFaqQuestion(m)) return false;
   if (looksLikeThanksOnly(message) || looksLikeGoodbye(message)) return false;
   if (looksLikeConversationalSmallTalk(message)) return false;
-  if (looksLikeGreeting(m)) return true;
+  if (looksLikeGreeting(m) || looksLikeGreetingTypo(m)) return true;
   const norm = m.normalize('NFD').replace(/\p{M}/gu, '');
-  return /^(hi|hey|hello|hiya|yo|howdy|greetings|help|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening|bonjour|salut|bonsoir|coucou|allo|allô|aide|hi there|hello there)\b/.test(
+  return /^(hi|hey|hello|hiya|yo|howdy|greetings|help|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening|bonjour|salut|bonsoir|coucou|allo|allô|aide|hi there|hello there|hyy+|heyy+|hii+)\b/.test(
     norm,
   );
 }
@@ -211,6 +226,13 @@ const SHORT_ALLOWED_WORDS = new Set([
   'hey',
   'hello',
   'hiya',
+  'hyy',
+  'heyy',
+  'heyyy',
+  'hii',
+  'hiii',
+  'helo',
+  'helllo',
   'yo',
   'hola',
   'bye',
@@ -259,6 +281,7 @@ function tokenLooksLikeGibberish(token: string): boolean {
   if (!t) return true;
   const lower = t.toLowerCase();
   if (SHORT_ALLOWED_WORDS.has(lower)) return false;
+  if (looksLikeGreetingTypo(lower)) return false;
   if (extractTrackingNumber(t)) return false;
   if (KEYBOARD_MASH_RE.test(lower)) return true;
   if (/^(\d)\1+$/.test(t) || /^([a-zA-Z])\1{2,}$/.test(t)) return true;
