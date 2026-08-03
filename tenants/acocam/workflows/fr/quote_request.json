@@ -1,0 +1,30 @@
+{
+  "id": "quote_request",
+  "intent": "quote.request",
+  "label": "Demande de devis",
+  "requireAuth": true,
+  "intro": "Je peux recueillir les détails de votre envoi et vous connecter avec ACOCAM pour un devis. **Connectez-vous** pour réserver directement sur votre compte — ou continuez en tant qu'invité et notre équipe vous contactera.",
+  "steps": [
+    { "id": "contact_name", "prompt": "Quel est votre nom complet ?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Quelle est l'adresse courriel de votre compte ACOCAM ?", "required": true, "validator": "email" },
+    { "id": "contact_phone", "prompt": "Quel est le meilleur numéro de téléphone ?", "required": true, "validator": "phone" },
+    {
+      "id": "origin",
+      "prompt": "Ville et pays d'origine (ex. Montréal, Canada) ?",
+      "required": true,
+      "validator": "text",
+      "help": "Utilisé comme lieu d'expédition."
+    },
+    {
+      "id": "destination",
+      "prompt": "Ville et pays de destination (ex. Douala, Cameroun) ?",
+      "required": true,
+      "validator": "text",
+      "help": "Utilisé comme lieu de livraison."
+    },
+    { "id": "cargo", "prompt": "Décrivez brièvement la marchandise.", "required": true, "validator": "text" },
+    { "id": "weight", "prompt": "Poids total approximatif (kg) ou CBM ?", "required": true, "validator": "text" }
+  ],
+  "completionMessage": "Envoi de votre demande de devis à ACOCAM…",
+  "onComplete": { "action": "tool", "toolId": "create_quotation" }
+}

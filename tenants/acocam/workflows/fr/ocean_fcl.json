@@ -1,0 +1,23 @@
+{
+  "id": "ocean_fcl",
+  "intent": "ocean.fcl",
+  "label": "Fret maritime FCL",
+  "requireAuth": true,
+  "intro": "Recueillons les détails pour une demande de conteneur complet (FCL).",
+  "steps": [
+    { "id": "origin", "prompt": "Port ou ville d'origine ?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Port ou ville de destination ?", "required": true, "validator": "text" },
+    {
+      "id": "container_type",
+      "prompt": "Conteneur préféré ? (20FT / 40FT / 40HC)",
+      "required": true,
+      "validator": "choice",
+      "choices": ["20FT", "40FT", "40HC"]
+    },
+    { "id": "cargo", "prompt": "Liste / nature de la marchandise ?", "required": true, "validator": "text" },
+    { "id": "weight", "prompt": "Poids approximatif ?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Courriel de suivi ?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Détails FCL recueillis pour examen par un spécialiste. La disponibilité reste soumise au devis.",
+  "onComplete": { "action": "escalation" }
+}

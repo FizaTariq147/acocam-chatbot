@@ -1,5 +1,5 @@
 import type { AgentSettings, KnowledgeHit, LlmMessage, LlmResult } from '@agent-platform/domain';
-import { acocamHumanFallback, humanizeRetrievedAnswer } from './response-style.js';
+import { acocamHumanFallback, acocamHumanFallbackLocalized, humanizeRetrievedAnswer } from './response-style.js';
 
 export interface AiProvider {
   readonly name: string;
@@ -107,6 +107,7 @@ export class AiEngine {
       agent?: AgentSettings;
       customerName?: string;
       priorIntent?: string | null;
+      language?: string;
     },
   ): Promise<{
     message: string;
@@ -115,7 +116,7 @@ export class AiEngine {
     citations: Array<{ id: string; title: string; score: number }>;
   }> {
     if (!hits.length) {
-      const fallback = acocamHumanFallback(userMessage);
+      const fallback = acocamHumanFallbackLocalized(userMessage, opts?.language ?? 'en');
       return {
         message: opts?.customerName ? `${opts.customerName} — ${fallback}` : fallback,
         source: 'assistant',

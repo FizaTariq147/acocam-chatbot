@@ -1,0 +1,18 @@
+{
+  "id": "air_freight",
+  "intent": "air.freight",
+  "label": "Fret aérien",
+  "requireAuth": true,
+  "intro": "Les demandes de fret aérien exigent une description exacte de la marchandise et des mesures. Batteries et liquides doivent être déclarés.",
+  "steps": [
+    { "id": "commodity", "prompt": "Description exacte de la marchandise ?", "required": true, "validator": "text" },
+    { "id": "packages", "prompt": "Nombre de colis ?", "required": true, "validator": "text" },
+    { "id": "weight_dims", "prompt": "Poids et dimensions réels ?", "required": true, "validator": "text" },
+    { "id": "value", "prompt": "Valeur déclarée (approx.) ?", "required": true, "validator": "text" },
+    { "id": "hazards", "prompt": "Batteries, liquides ou articles réglementés ? (oui/non + détails)", "required": true, "validator": "text" },
+    { "id": "route", "prompt": "Origine et destination ?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Courriel de suivi ?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Détails de fret aérien recueillis. Les articles réglementés seront examinés par un agent avant acceptation.",
+  "onComplete": { "action": "escalation" }
+}

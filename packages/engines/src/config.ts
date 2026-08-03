@@ -16,11 +16,17 @@ export interface TenantPack {
   theme: ThemeConfig;
   intents: IntentDefinition[];
   workflows: Record<string, WorkflowDefinition>;
+  /** Optional localized workflow definitions (e.g. fr). */
+  workflowsByLang?: Partial<Record<string, Record<string, WorkflowDefinition>>>;
   tools: Record<string, ToolDefinition>;
   prompts: {
     system: string;
     safety: string;
   };
+  /** Optional localized prompts keyed by language code. */
+  promptsByLang?: Partial<Record<string, { system: string; safety: string }>>;
+  /** UI / pipeline string tables keyed by language code. */
+  locales: Record<string, Record<string, string>>;
   policies: {
     escalation: EscalationPolicy;
   };
@@ -56,6 +62,21 @@ async function readText(filePath: string, fallback = ''): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+async function loadLocales(dir: string): Promise<Record<string, Record<string, string>>> {
+  const out: Record<string, Record<string, string>> = {};
+  try {
+    const files = await fs.readdir(dir);
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const lang = file.replace(/\.json$/i, '');
+      out[lang] = await readJson<Record<string, string>>(path.join(dir, file), {});
+    }
+  } catch {
+    /* empty */
+  }
+  return out;
 }
 
 async function loadWorkflows(dir: string): Promise<Record<string, WorkflowDefinition>> {
@@ -161,19 +182,35 @@ export class ConfigEngine {
     );
     const intents = Array.isArray(intentsFile) ? intentsFile : intentsFile.intents ?? [];
 
+    const promptsDir = path.join(rootDir, 'prompts');
+    const frSystem = await readText(path.join(promptsDir, 'system.fr.md'), '');
+    const frSafety = await readText(path.join(promptsDir, 'safety.fr.md'), '');
+
     const pack: TenantPack = {
       settings,
       theme: branding.theme,
       intents,
       workflows: await loadWorkflows(path.join(rootDir, 'workflows')),
+      workflowsByLang: {
+        fr: await loadWorkflows(path.join(rootDir, 'workflows', 'fr')),
+      },
       tools: await loadTools(path.join(rootDir, 'tools')),
       prompts: {
-        system: await readText(path.join(rootDir, 'prompts', 'system.md'), 'You are a helpful assistant.'),
+        system: await readText(path.join(promptsDir, 'system.md'), 'You are a helpful assistant.'),
         safety: await readText(
-          path.join(rootDir, 'prompts', 'safety.md'),
+          path.join(promptsDir, 'safety.md'),
           'Never invent prices, tracking numbers, or account data.',
         ),
       },
+      promptsByLang: frSystem
+        ? {
+            fr: {
+              system: frSystem,
+              safety: frSafety || 'Ne jamais inventer de prix, numéros de suivi ou données de compte.',
+            },
+          }
+        : undefined,
+      locales: await loadLocales(path.join(rootDir, 'locales')),
       policies: {
         escalation: await readJson<EscalationPolicy>(path.join(rootDir, 'policies', 'escalation.json'), {
           softTriggers: ['speak to human', 'talk to agent', 'real person'],

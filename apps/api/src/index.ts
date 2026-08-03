@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlatform, bootstrapKnowledge } from './platform.js';
-import { sanitizeTenantId, validateCustomerToken } from '@agent-platform/engines';
+import { sanitizeTenantId, validateCustomerToken, normalizeLanguage, welcomeForLanguage, supportedLanguagesForAgent, uiStringsForLanguage } from '@agent-platform/engines';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const platform = createPlatform();
@@ -121,30 +121,37 @@ async function main() {
     }
   });
 
-  app.get<{ Params: { tenantId: string; agentId: string } }>(
+  app.get<{ Params: { tenantId: string; agentId: string }; Querystring: { lang?: string } }>(
     '/v1/tenants/:tenantId/agents/:agentId/config/public',
     async (req, reply) => {
       const pack = await platform.config.load(req.params.tenantId);
       const agent = platform.config.getAgent(pack, req.params.agentId);
       if (!agent) return reply.code(404).send({ ok: false, error: 'Agent not found' });
+      const lang = normalizeLanguage(req.query.lang ?? agent.defaultLanguage);
       return {
         tenantId: pack.settings.tenantId,
         agentId: agent.id,
         name: agent.name,
-        welcome: agent.welcome,
+        welcome: welcomeForLanguage(agent, lang),
+        defaultLanguage: agent.defaultLanguage,
+        supportedLanguages: supportedLanguagesForAgent(agent),
+        ui: uiStringsForLanguage(pack, lang),
         theme: pack.theme,
-        actions: platform.publicActionsForTenant(pack),
+        actions: platform.publicActionsForTenant(pack, process.env, lang),
       };
     },
   );
 
-  app.post<{ Params: { tenantId: string; agentId: string } }>(
+  app.post<{ Params: { tenantId: string; agentId: string }; Body: { language?: string } }>(
     '/v1/tenants/:tenantId/agents/:agentId/sessions',
     async (req, reply) => {
       const pack = await platform.config.load(req.params.tenantId);
       const agent = platform.config.getAgent(pack, req.params.agentId);
       if (!agent) return reply.code(404).send({ ok: false, error: 'Agent not found' });
+      const lang = normalizeLanguage(req.body?.language ?? agent.defaultLanguage);
       const session = await platform.memory.getStore().create(req.params.tenantId, req.params.agentId);
+      session.state.language = lang;
+      await platform.memory.getStore().updateState(req.params.tenantId, session.sessionId, session.state);
       platform.analytics.track({
         tenantId: req.params.tenantId,
         agentId: req.params.agentId,
@@ -154,7 +161,8 @@ async function main() {
       return {
         ok: true,
         sessionId: session.sessionId,
-        welcome: agent.welcome,
+        welcome: welcomeForLanguage(agent, lang),
+        language: lang,
         conversation: session.state,
       };
     },
@@ -173,7 +181,7 @@ async function main() {
 
   app.post<{
     Params: { tenantId: string; agentId: string; sessionId: string };
-    Body: { message?: string; actionId?: string; customerAuthToken?: string };
+    Body: { message?: string; actionId?: string; customerAuthToken?: string; language?: string };
   }>('/v1/tenants/:tenantId/agents/:agentId/sessions/:sessionId/messages', async (req, reply) => {
     const message = req.body?.message?.trim() ?? '';
     if (message.length > MAX_MESSAGE_LENGTH) {
@@ -198,6 +206,7 @@ async function main() {
         message: message || String(req.body?.actionId),
         actionId: req.body?.actionId,
         customerAuthToken,
+        language: req.body?.language,
       });
       return result;
     } catch (err) {

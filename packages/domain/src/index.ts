@@ -84,7 +84,11 @@ export interface AgentSettings {
   id: string;
   name: string;
   welcome: string;
+  /** Optional localized welcome messages keyed by language code (e.g. fr). */
+  welcomeByLanguage?: Record<string, string>;
   defaultLanguage: string;
+  /** Languages this agent supports (e.g. ["en", "fr"]). Defaults to defaultLanguage only. */
+  supportedLanguages?: string[];
   confidenceThreshold: number;
   escalationFailureThreshold: number;
   aiProvider?: string;
@@ -136,6 +140,8 @@ export interface ChatMessage {
 
 export interface ConversationState {
   phase: 'idle' | 'collecting' | 'ready' | 'escalated';
+  /** Active conversation language (en | fr). Defaults to agent defaultLanguage. */
+  language?: string;
   activeIntent: string | null;
   slots: Record<string, string>;
   awaitingSlot: string | null;
@@ -186,6 +192,9 @@ export interface PublicAgentConfig {
   agentId: string;
   name: string;
   welcome: string;
+  defaultLanguage: string;
+  supportedLanguages: string[];
+  ui: Record<string, string>;
   theme: ThemeConfig;
   actions: ActionButton[];
 }

@@ -14,11 +14,13 @@ export interface KnowledgeChunk {
   tokens: string[];
   kind?: 'qa' | 'section';
   question?: string;
+  /** Language code for this chunk (en | fr). Defaults to en. */
+  language?: string;
 }
 
 export interface VectorSearchPort {
   upsert(tenantId: string, chunks: KnowledgeChunk[]): Promise<void>;
-  search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]>;
+  search(tenantId: string, query: string, limit: number, language?: string): Promise<KnowledgeHit[]>;
 }
 
 const STOP = new Set([
@@ -26,6 +28,10 @@ const STOP = new Set([
   'what', 'when', 'where', 'which', 'who', 'how', 'can', 'does', 'do', 'is',
   'a', 'an', 'to', 'of', 'in', 'on', 'my', 'me', 'we', 'our', 'please', 'tell',
   'about', 'any', 'also', 'just', 'like', 'need', 'want', 'know', 'get', 'got',
+  // French stopwords
+  'les', 'des', 'une', 'est', 'pas', 'pour', 'par', 'sur', 'dans', 'avec', 'vos', 'votre',
+  'nous', 'vous', 'qui', 'que', 'quoi', 'comment', 'quand', 'où', 'estce', 'cette', 'ces',
+  'mon', 'mes', 'ton', 'tes', 'son', 'ses', 'leur', 'leurs', 'plus', 'tout', 'tous',
 ]);
 
 /** Domain synonyms so paraphrased questions still hit the right FAQ. */
@@ -53,6 +59,19 @@ const SYNONYM_GROUPS: string[][] = [
   ['canada', 'montreal', 'halifax', 'toronto', 'moncton'],
   ['payment', 'pay', 'paid', 'online', 'card'],
   ['app', 'mobile', 'application'],
+  // French logistics synonyms
+  ['devis', 'quotation', 'estimation', 'prix', 'tarif', 'tarifs', 'cout', 'coût'],
+  ['suivre', 'suivi', 'tracking', 'localiser', 'statut'],
+  ['expedier', 'expédier', 'expedition', 'expédition', 'envoi', 'envoyer', 'cargo', 'fret'],
+  ['document', 'documents', 'paperasse', 'facture', 'colisage'],
+  ['vehicule', 'véhicule', 'voiture', 'auto', 'moto', 'motorcycle'],
+  ['conteneur', 'fcl', 'lcl', 'groupage', 'consolidation', 'maritime', 'ocean'],
+  ['aerien', 'aérien', 'avion', 'aeroport', 'aéroport'],
+  ['douane', 'douanes', 'dedouanement', 'dédouanement', 'import', 'export'],
+  ['colis', 'paquet', 'courier', 'express'],
+  ['entrepot', 'entrepôt', 'stockage'],
+  ['assurance', 'couverture'],
+  ['reserver', 'réserver', 'reservation', 'réservation'],
 ];
 
 const SYNONYM_MAP = buildSynonymMap(SYNONYM_GROUPS);
@@ -76,9 +95,14 @@ function jaccard(a: string[], b: string[]): number {
   return union ? inter / union : 0;
 }
 
+/** Strip accents so French queries match indexed tokens. */
+function stripAccents(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '');
+}
+
 /** Light stemmer for English logistics vocabulary (no external deps). */
 export function stem(token: string): string {
-  let t = token.toLowerCase();
+  let t = stripAccents(token.toLowerCase());
   if (t.length <= 3) return t;
   if (t.endsWith('ies') && t.length > 4) t = `${t.slice(0, -3)}y`;
   else if (t.endsWith('ing') && t.length > 5) t = t.slice(0, -3);
@@ -89,7 +113,7 @@ export function stem(token: string): string {
 }
 
 export function tokenize(text: string): string[] {
-  return text
+  return stripAccents(text)
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')
     .split(/\s+/)
@@ -115,12 +139,21 @@ function bigrams(tokens: string[]): string[] {
 }
 
 function normalizeQuestion(text: string): string {
-  return text
+  return stripAccents(text)
     .toLowerCase()
     .replace(/^q\d+\.\s*/i, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function chunkLanguage(filePath: string, fileName: string): string {
+  const lowerPath = filePath.replace(/\\/g, '/').toLowerCase();
+  const lowerName = fileName.toLowerCase();
+  if (/\/fr\//.test(lowerPath) || lowerName.includes('-fr.') || lowerName.endsWith('_fr.md')) {
+    return 'fr';
+  }
+  return 'en';
 }
 
 function tokenSet(tokens: string[]): Set<string> {
@@ -135,8 +168,10 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
     this.byTenant.set(tenantId, chunks);
   }
 
-  async search(tenantId: string, query: string, limit: number): Promise<KnowledgeHit[]> {
-    const chunks = this.byTenant.get(tenantId) ?? [];
+  async search(tenantId: string, query: string, limit: number, language = 'en'): Promise<KnowledgeHit[]> {
+    const all = this.byTenant.get(tenantId) ?? [];
+    const lang = language === 'fr' ? 'fr' : 'en';
+    const chunks = all.filter((c) => (c.language ?? 'en') === lang);
     if (!chunks.length) return [];
 
     const qNorm = normalizeQuestion(query);
@@ -248,6 +283,9 @@ export class LexicalKnowledgeIndex implements VectorSearchPort {
         if (/^(hi|hello|hey|thanks|thank you|bye|goodbye|help)\b/.test(qNorm) && /^(hi|hello|hey|thanks|thank you|bye|goodbye|help)\b/.test(heading)) {
           score += 22;
         }
+        if (/^(comment ca va|comment allez|bonjour|salut|bonsoir|merci|au revoir)\b/.test(qNorm) && /\b(comment ca va|comment allez|bonjour|salut|bonsoir|merci)\b/.test(heading)) {
+          score += 22;
+        }
 
         // Prefer substantive FAQ questions over tiny ones like "Call me."
         // Do not penalize exact short greeting / basics matches.
@@ -297,14 +335,14 @@ export function extractQaPairs(md: string): Array<{ question: string; answer: st
   };
 
   for (const line of lines) {
-    const qm = line.match(/^Q\d+\.\s*(.+)\s*$/i);
+    const qm = line.match(/^Q\d+[a-z]?\.\s*(.+)\s*$/i);
     if (qm) {
       flush();
       currentQ = qm[1]!.trim();
       continue;
     }
     if (currentQ) {
-      if (/^#{1,3}\s/.test(line) || /^Q\d+\.\s*/i.test(line)) {
+      if (/^#{1,3}\s/.test(line) || /^Q\d+[a-z]?\.\s*/i.test(line)) {
         flush();
         if (/^#{1,3}\s/.test(line)) continue;
       }
@@ -315,9 +353,10 @@ export function extractQaPairs(md: string): Array<{ question: string; answer: st
   return pairs;
 }
 
-function splitMarkdown(md: string, tenantId: string, fileName: string): KnowledgeChunk[] {
+function splitMarkdown(md: string, tenantId: string, fileName: string, filePath = fileName): KnowledgeChunk[] {
   const chunks: KnowledgeChunk[] = [];
   let title = fileName.replace(/\.md$/i, '');
+  const language = chunkLanguage(filePath, fileName);
 
   for (const pair of extractQaPairs(md)) {
     const content = `Q: ${pair.question}\n\nA: ${pair.answer}`;
@@ -334,6 +373,7 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
       tokens: expandTokens(tokenize(`${pair.question} ${pair.answer}`)),
       kind: 'qa',
       question: pair.question,
+      language,
     });
   }
 
@@ -369,6 +409,7 @@ function splitMarkdown(md: string, tenantId: string, fileName: string): Knowledg
         content: piece.slice(0, 4000),
         tokens: expandTokens(tokenize(piece)),
         kind: 'section',
+        language,
       });
     });
   }
@@ -396,7 +437,7 @@ export class KnowledgeEngine {
     const all: KnowledgeChunk[] = [];
     for (const file of files) {
       const raw = await fs.readFile(file, 'utf8');
-      all.push(...splitMarkdown(raw, tenantId, path.basename(file)));
+      all.push(...splitMarkdown(raw, tenantId, path.basename(file), file));
     }
     await this.index.upsert(tenantId, all);
     await ensureDir(path.join(this.dataDir, 'indexes'));
@@ -418,8 +459,8 @@ export class KnowledgeEngine {
     return this.loadPersistedIndex(tenantId);
   }
 
-  async search(tenantId: string, query: string, limit = 4): Promise<KnowledgeHit[]> {
-    return this.index.search(tenantId, query, limit);
+  async search(tenantId: string, query: string, limit = 4, language = 'en'): Promise<KnowledgeHit[]> {
+    return this.index.search(tenantId, query, limit, language);
   }
 
   async listTenantIdsFromDisk(): Promise<string[]> {

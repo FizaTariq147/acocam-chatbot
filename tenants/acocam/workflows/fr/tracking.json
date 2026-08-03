@@ -1,0 +1,17 @@
+{
+  "id": "tracking",
+  "intent": "shipment.track",
+  "label": "Suivi d'envoi",
+  "intro": "Je peux consulter le suivi en direct lorsqu'un numéro de dossier ou de suivi est fourni.",
+  "steps": [
+    {
+      "id": "trackingNumber",
+      "prompt": "Veuillez entrer votre numéro de réservation, conteneur, connaissement (B/L, HBL), AWB ou dossier / suivi ACOCAM.",
+      "required": true,
+      "validator": "tracking_ref",
+      "help": "Exemple : ACO-123456 ou votre référence de suivi transporteur."
+    }
+  ],
+  "completionMessage": "Recherche du suivi en cours…",
+  "onComplete": { "action": "tool", "toolId": "track_shipment" }
+}

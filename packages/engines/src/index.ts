@@ -52,7 +52,7 @@ export {
 
 } from './ai.js';
 
-export { acocamHumanFallback, humanizeRetrievedAnswer, topicHints } from './response-style.js';
+export { acocamHumanFallback, acocamHumanFallbackFr, acocamHumanFallbackLocalized, humanizeRetrievedAnswer, topicHints } from './response-style.js';
 
 export { WorkflowEngine } from './workflow.js';
 
@@ -69,6 +69,7 @@ export {
   type PortalUrls,
 
   loginPrompt,
+  accountSignupGuide,
 
   profileToWorkflowSlots,
 
@@ -95,5 +96,20 @@ export {
   isDevMode,
 
 } from './security.js';
+
+export {
+  normalizeLanguage,
+  resolveSessionLanguage,
+  resolveTurnLanguage,
+  detectLanguageFromMessage,
+  welcomeForLanguage,
+  localeString,
+  promptsForLanguage,
+  workflowsForLanguage,
+  supportedLanguagesForAgent,
+  uiStringsForLanguage,
+  agentSupportsLanguage,
+  type SupportedLang,
+} from './locale.js';
 
 
