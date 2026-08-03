@@ -15,6 +15,27 @@ export interface ToolRuntimeContext {
   customerAuthToken?: string;
   slots?: Record<string, string>;
   portal?: PortalUrls;
+  /** Conversation language (en | fr) for localized tool messages. */
+  language?: string;
+  /** Tenant locale string table for the active language. */
+  locale?: Record<string, string>;
+}
+
+function locText(locale: Record<string, string> | undefined, key: string, fallback: string): string {
+  return locale?.[key]?.trim() || fallback;
+}
+
+function locTemplate(
+  locale: Record<string, string> | undefined,
+  key: string,
+  fallback: string,
+  vars: Record<string, string>,
+): string {
+  let text = locText(locale, key, fallback);
+  for (const [k, v] of Object.entries(vars)) {
+    text = text.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v);
+  }
+  return text;
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -181,9 +202,9 @@ function formatStatus(raw: string): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatHistory(history: unknown): string[] {
+function formatHistory(history: unknown, locale?: Record<string, string>): string[] {
   if (!Array.isArray(history) || !history.length) return [];
-  const lines: string[] = ['', 'Recent updates:'];
+  const lines: string[] = ['', locText(locale, 'tool.trackHistoryHeader', 'Recent updates:')];
   for (const entry of history.slice(0, 5)) {
     if (!entry || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
@@ -197,10 +218,19 @@ function formatHistory(history: unknown): string[] {
 }
 
 /** Human-readable tracking card for ACOCAM public track API. */
-export function summarizeTracking(data: unknown, fallbackTrackingNumber: string): string {
+export function summarizeTracking(
+  data: unknown,
+  fallbackTrackingNumber: string,
+  locale?: Record<string, string>,
+): string {
   const obj = asRecord(data);
   if (!obj) {
-    return `I looked up **${fallbackTrackingNumber}**, but the tracking response was empty. Please try again or use [Track Now](https://acocamtrading.ca/) on the ACOCAM website.`;
+    return locTemplate(
+      locale,
+      'tool.trackEmpty',
+      'I looked up **{{tracking}}**, but the tracking response was empty. Please try again or use [Track Now](https://acocamtrading.ca/) on the ACOCAM website.',
+      { tracking: fallbackTrackingNumber },
+    );
   }
 
   const trackingNumber =
@@ -219,14 +249,16 @@ export function summarizeTracking(data: unknown, fallbackTrackingNumber: string)
   ]);
   const receiver = pickString(obj, ['receiver_name', 'receiverName', 'consignee']);
 
-  const lines = [`Tracking for **${trackingNumber}**:`];
-  if (status) lines.push(`- Status: ${formatStatus(status)}`);
-  if (origin) lines.push(`- Origin: ${origin}`);
-  if (destination) lines.push(`- Destination: ${destination}`);
-  if (carrier) lines.push(`- Carrier: ${carrier}`);
-  if (eta) lines.push(`- Expected delivery: ${eta}`);
-  if (receiver) lines.push(`- Receiver: ${receiver}`);
-  lines.push(...formatHistory(obj.tracking_history ?? obj.trackingHistory ?? obj.history));
+  const lines = [
+    locTemplate(locale, 'tool.trackTitle', 'Tracking for **{{tracking}}**:', { tracking: trackingNumber }),
+  ];
+  if (status) lines.push(`- ${locText(locale, 'tool.trackStatus', 'Status')}: ${formatStatus(status)}`);
+  if (origin) lines.push(`- ${locText(locale, 'tool.trackOrigin', 'Origin')}: ${origin}`);
+  if (destination) lines.push(`- ${locText(locale, 'tool.trackDestination', 'Destination')}: ${destination}`);
+  if (carrier) lines.push(`- ${locText(locale, 'tool.trackCarrier', 'Carrier')}: ${carrier}`);
+  if (eta) lines.push(`- ${locText(locale, 'tool.trackEta', 'Expected delivery')}: ${eta}`);
+  if (receiver) lines.push(`- ${locText(locale, 'tool.trackReceiver', 'Receiver')}: ${receiver}`);
+  lines.push(...formatHistory(obj.tracking_history ?? obj.trackingHistory ?? obj.history, locale));
 
   if (lines.length === 1) {
     lines.push('```json');
@@ -234,48 +266,56 @@ export function summarizeTracking(data: unknown, fallbackTrackingNumber: string)
     lines.push('```');
   }
 
-  lines.push('\nYou can also track on [acocamtrading.ca](https://acocamtrading.ca/) (Track Now).');
-  lines.push('Need more help? Ask me another question or talk to a human agent.');
+  lines.push(`\n${locText(locale, 'tool.trackFooter', 'You can also track on [acocamtrading.ca](https://acocamtrading.ca/) (Track Now).')}`);
+  lines.push(locText(locale, 'tool.trackHelp', 'Need more help? Ask me another question or talk to a human agent.'));
   return lines.join('\n');
 }
 
-function summarizeQuotation(data: unknown): string {
+function summarizeQuotation(data: unknown, locale?: Record<string, string>): string {
   if (!data || typeof data !== 'object') {
-    return 'Your quotation request was submitted, but I did not receive details back from the API.';
+    return locText(
+      locale,
+      'tool.quoteEmpty',
+      'Your quotation request was submitted, but I did not receive details back from the API.',
+    );
   }
   const q = data as Record<string, unknown>;
   const id = q.id ?? q.quotation_id;
   const status = q.status ?? 'pending';
-  const lines = ['Your **quotation request** has been submitted to ACOCAM.'];
-  if (id) lines.push(`- Reference ID: **${id}**`);
-  lines.push(`- Status: **${status}**`);
-  lines.push(
-    '\nAn ACOCAM specialist will review your request. No price is confirmed in chat until you receive an official quote in your account.',
-  );
+  const lines = [locText(locale, 'tool.quoteSubmitted', 'Your **quotation request** has been submitted to ACOCAM.')];
+  if (id) lines.push(`- ${locText(locale, 'tool.quoteRef', 'Reference ID')}: **${id}**`);
+  lines.push(`- ${locText(locale, 'tool.quoteStatus', 'Status')}: **${status}**`);
+  lines.push(`\n${locText(locale, 'tool.quoteReview', 'An ACOCAM specialist will review your request. No price is confirmed in chat until you receive an official quote in your account.')}`);
   if (typeof q.requires_manual_quote === 'boolean' && q.requires_manual_quote) {
-    lines.push('\nThis request requires manual review — our team will follow up by email.');
+    lines.push(`\n${locText(locale, 'tool.quoteManual', 'This request requires manual review — our team will follow up by email.')}`);
   }
   return lines.join('\n');
 }
 
-function summarizeBooking(data: unknown, portal?: PortalUrls): string {
+function summarizeBooking(data: unknown, portal?: PortalUrls, locale?: Record<string, string>): string {
   if (!data || typeof data !== 'object') {
-    return 'Your shipment booking was submitted, but I did not receive details back from the API.';
+    return locText(
+      locale,
+      'tool.bookEmpty',
+      'Your shipment booking was submitted, but I did not receive details back from the API.',
+    );
   }
   const q = data as Record<string, unknown>;
   const id = q.id ?? q.quotation_id;
   const status = q.status ?? 'pending';
   const login = portal?.loginUrl ?? 'https://acocamtrading.ca/login';
-  const lines = ['Your **shipment booking** has been submitted to your ACOCAM account.'];
-  if (id) lines.push(`- Booking reference: **${id}**`);
-  lines.push(`- Status: **${status}**`);
+  const lines = [locText(locale, 'tool.bookSubmitted', 'Your **shipment booking** has been submitted to your ACOCAM account.')];
+  if (id) lines.push(`- ${locText(locale, 'tool.bookRef', 'Booking reference')}: **${id}**`);
+  lines.push(`- ${locText(locale, 'tool.quoteStatus', 'Status')}: **${status}**`);
   lines.push(
-    '\nOur team will review routing, pricing, and documentation. Final rates are confirmed in your account — not in chat.',
+    `\n${locText(locale, 'tool.bookReview', 'Our team will review routing, pricing, and documentation. Final rates are confirmed in your account — not in chat.')}`,
   );
   if (typeof q.requires_manual_quote === 'boolean' && q.requires_manual_quote) {
-    lines.push('\nThis route requires specialist review — we will follow up by email.');
+    lines.push(`\n${locText(locale, 'tool.bookManual', 'This route requires specialist review — we will follow up by email.')}`);
   }
-  lines.push(`\nTrack progress in [your ACOCAM account](${login}).`);
+  lines.push(
+    `\n${locTemplate(locale, 'tool.bookAccount', 'Track progress in [your ACOCAM account]({{loginUrl}}).', { loginUrl: login })}`,
+  );
   return lines.join('\n');
 }
 
@@ -290,22 +330,79 @@ function profileToWorkflowSlots(data: unknown): Record<string, string> {
   return slots;
 }
 
-function loginPrompt(portal?: PortalUrls): string {
+function loginPrompt(portal?: PortalUrls, locale?: Record<string, string>): string {
   const login = portal?.loginUrl ?? 'https://acocamtrading.ca/login';
   const signup = portal?.signupUrl ?? login;
   const quote = portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/';
   const authLines =
     signup === login
-      ? [`- [Log in or create an account](${login})`]
-      : [`- [Log in](${login})`, `- [Create account](${signup})`];
+      ? [`- [${locText(locale, 'auth.loginCombined', 'Log in or create an account')}](${login})`]
+      : [
+          `- [${locText(locale, 'auth.login', 'Log in')}](${login})`,
+          `- [${locText(locale, 'auth.signup', 'Create account')}](${signup})`,
+        ];
   return [
-    'To **book a shipment** or **get a quote** through the live ACOCAM system, please sign in to your account first:',
+    locText(
+      locale,
+      'auth.loginIntro',
+      'To **book a shipment** or **get a quote** through the live ACOCAM system, please sign in to your account first:',
+    ),
     '',
     ...authLines,
-    `- [Get a quote on the website](${quote})`,
+    `- [${locText(locale, 'auth.quoteOnline', 'Get a quote on the website')}](${quote})`,
     '',
-    'After you sign in on the website, return to chat and tap **Get a quote** again — your session will be detected automatically.',
-    'If your website passes a customer login token to the chat widget, I can submit the quotation API on your behalf.',
+    locText(
+      locale,
+      'auth.loginReturn',
+      'After you sign in on the website, return to chat and tap **Get a quote** again — your session will be detected automatically.',
+    ),
+    locText(
+      locale,
+      'auth.loginTokenHint',
+      'If your website passes a customer login token to the chat widget, I can submit the quotation API on your behalf.',
+    ),
+  ].join('\n');
+}
+
+/** Step-by-step account creation guide for signup / registration questions. */
+function accountSignupGuide(portal?: PortalUrls, locale?: Record<string, string>): string {
+  const login = portal?.loginUrl ?? 'https://acocamtrading.ca/login';
+  const quote = portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/';
+  return [
+    locText(
+      locale,
+      'auth.accountGuideIntro',
+      'To **create your ACOCAM customer account** (quotes, bookings, tracking, and documents):',
+    ),
+    '',
+    locTemplate(
+      locale,
+      'auth.accountStep1',
+      '1. Go to [Log in / Create account]({{loginUrl}}) on acocamtrading.ca',
+      { loginUrl: login },
+    ),
+    locText(
+      locale,
+      'auth.accountStep2',
+      '2. Choose **Create account** / **Sign up** and complete your profile (name, email, phone).',
+    ),
+    locText(
+      locale,
+      'auth.accountStep3',
+      '3. Sign in after registration (verify your email if prompted).',
+    ),
+    locText(
+      locale,
+      'auth.accountStep4',
+      '4. Return to this chat — your session may be detected automatically if the website links the widget to your login.',
+    ),
+    '',
+    locTemplate(
+      locale,
+      'auth.accountGuest',
+      'Prefer not to register yet? [Get a quote online]({{quoteUrl}}) as a guest — our team will follow up by email.',
+      { quoteUrl: quote },
+    ),
   ].join('\n');
 }
 
@@ -395,57 +492,85 @@ export class ToolEngine {
 
   formatResult(def: ToolDefinition, result: ToolResult, ctx?: ToolRuntimeContext): string {
     const slots = ctx?.slots;
+    const locale = ctx?.locale;
     const devMode = isDevMode(ctx?.env);
     const errText = sanitizeUserFacingError(result.error, devMode);
     if (result.authRequired) {
-      return loginPrompt(ctx?.portal);
+      return loginPrompt(ctx?.portal, locale);
     }
     if (!result.ok) {
       if (def.id === 'track_shipment') {
         const tn = slots?.trackingNumber ? ` **${slots.trackingNumber}**` : '';
         if (result.httpStatus === 401 || result.httpStatus === 403) {
           return [
-            `Sign-in is required to look up shipment${tn} in the live system.`,
-            loginPrompt(ctx?.portal),
+            locTemplate(locale, 'tool.trackAuthRequired', 'Sign-in is required to look up shipment{{tracking}} in the live system.', {
+              tracking: tn,
+            }),
+            loginPrompt(ctx?.portal, locale),
           ].join('\n\n');
         }
         if (result.httpStatus === 404) {
-          return [
-            `I could not find a shipment${tn}.`,
-            'Please double-check the tracking / file / AWB / B/L number and try again,',
-            'or use [Track Now](https://acocamtrading.ca/), or ask to speak with a human agent.',
-          ].join(' ');
+          return locTemplate(
+            locale,
+            'tool.trackNotFound',
+            'I could not find a shipment{{tracking}}. Please double-check the tracking / file / AWB / B/L number and try again, or use [Track Now](https://acocamtrading.ca/), or ask to speak with a human agent.',
+            { tracking: tn },
+          );
         }
-        return [
-          `I could not look up that shipment right now${errText ? ` (${errText})` : ''}.`,
-          'Please confirm the tracking / file number, try [Track Now](https://acocamtrading.ca/), or ask to speak with a human agent.',
-        ].join(' ');
+        const detail = errText
+          ? locTemplate(locale, 'tool.genericErrorDetail', ': {{detail}}', { detail: errText })
+          : '';
+        return locTemplate(
+          locale,
+          'tool.trackError',
+          'I could not look up that shipment right now{{detail}}. Please confirm the tracking / file number, try [Track Now](https://acocamtrading.ca/), or ask to speak with a human agent.',
+          { detail },
+        );
       }
       if (def.id === 'create_quotation') {
         if (result.httpStatus === 401 || result.httpStatus === 403) {
-          return loginPrompt(ctx?.portal);
+          return loginPrompt(ctx?.portal, locale);
         }
         const isBooking = slots?.bookingIntent === 'true';
-        const action = isBooking ? 'shipment booking' : 'quotation request';
-        return [
-          `I could not submit your ${action}${errText ? ` (${errText})` : ''}.`,
-          `Please sign in at [acocamtrading.ca/login](${ctx?.portal?.loginUrl ?? 'https://acocamtrading.ca/login'}) or [get a quote online](${ctx?.portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/'}), then try again. You can also ask for a human agent.`,
-        ].join(' ');
+        const action = locText(
+          locale,
+          isBooking ? 'tool.quoteActionBooking' : 'tool.quoteActionQuotation',
+          isBooking ? 'shipment booking' : 'quotation request',
+        );
+        const detail = errText
+          ? locTemplate(locale, 'tool.genericErrorDetail', ': {{detail}}', { detail: errText })
+          : '';
+        const loginUrl = ctx?.portal?.loginUrl ?? 'https://acocamtrading.ca/login';
+        const quoteUrl = ctx?.portal?.quoteUrl ?? 'https://acocamtrading.ca/get-quote/';
+        return locTemplate(
+          locale,
+          'tool.quoteSubmitError',
+          'I could not submit your {{action}}{{detail}}. Please sign in at [acocamtrading.ca/login]({{loginUrl}}) or [get a quote online]({{quoteUrl}}), then try again. You can also ask for a human agent.',
+          { action, detail, loginUrl, quoteUrl },
+        );
       }
-      return `I could not complete **${def.label}** right now${errText ? `: ${errText}` : '.'} Would you like a human agent instead?`;
+      const detail = errText
+        ? locTemplate(locale, 'tool.genericErrorDetail', ': {{detail}}', { detail: errText })
+        : locText(locale, 'tool.genericErrorEnd', '.');
+      return locTemplate(
+        locale,
+        'tool.genericError',
+        'I could not complete **{{label}}** right now{{detail}} Would you like a human agent instead?',
+        { label: def.label, detail },
+      );
     }
     if (def.id === 'track_shipment') {
       const fallback = slots?.trackingNumber || 'your shipment';
-      return summarizeTracking(result.data, fallback);
+      return summarizeTracking(result.data, fallback, locale);
     }
     if (def.id === 'create_quotation') {
       if (slots?.bookingIntent === 'true') {
-        return summarizeBooking(result.data, ctx?.portal);
+        return summarizeBooking(result.data, ctx?.portal, locale);
       }
-      return summarizeQuotation(result.data);
+      return summarizeQuotation(result.data, locale);
     }
     return `Here is the result for **${def.label}**:\n\`\`\`json\n${JSON.stringify(result.data, null, 2).slice(0, 2500)}\n\`\`\``;
   }
 }
 
-export { loginPrompt, profileToWorkflowSlots, splitLocation, enrichQuoteSlots };
+export { loginPrompt, accountSignupGuide, profileToWorkflowSlots, splitLocation, enrichQuoteSlots };

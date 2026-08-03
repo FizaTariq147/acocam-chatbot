@@ -64,7 +64,7 @@ Q17. Can you help me?
 Yes. Share your question about shipping, tracking, quotes, documents, or ACOCAM services, and I will help using our company knowledge.
 
 Q18. What is ACOCAM?
-ACOCAM Trading Inc. is your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation. How may I assist you today?
+ACOCAM Trading Inc. is a Canadian international logistics company and freight forwarder based in Moncton, New Brunswick. We help with ocean freight (FCL/LCL), air freight, vehicle shipping, parcels, personal effects, and import-export — especially strong on Canada ↔ Africa routes and worldwide partner networks. Website: https://acocamtrading.ca/ — How may I assist you today?
 
 Q19. How can I contact you?
 You can contact ACOCAM through the website at https://acocamtrading.ca/, request a quote online, or ask me here for phone/email details from our knowledge base. For urgent issues, ask to speak with a human agent.
@@ -82,7 +82,67 @@ Q23. No
 No problem. If you need help later with shipping, tracking, or a quote, I’m here.
 
 Q24. What languages do you support?
-I primarily assist in English. For French or other language needs, our team can help — ask to speak with a human agent if you prefer.
+I assist in **English** and **French**. You can chat with me in either language — for other languages, our team can help; ask to speak with a human agent if you prefer.
 
 Q25. Is this chat free?
 Yes. Chatting with the ACOCAM assistant is free. Standard quote requests are generally free; any specialized fees are disclosed before work begins.
+
+Q26. Hi there
+Hi there! Welcome to ACOCAM Trading Inc. I can help with shipping questions, tracking, quotes, ocean/air freight, vehicles, parcels, and documentation. How may I assist you today?
+
+Q27. Hello there
+Hello there! Welcome to ACOCAM Trading Inc. Ask me about our services, tracking, quotes, or contact details — or tap a button below to get started.
+
+Q28. Good day
+Good day! Welcome to ACOCAM Trading Inc. How can I help with your shipping or logistics needs today?
+
+Q29. Howdy
+Hey! I’m the ACOCAM assistant. I can answer logistics questions, help you track a shipment, or guide you to request a quote. What do you need?
+
+Q30. Greetings
+Hello! Welcome to ACOCAM Trading Inc. I can help with shipping questions, tracking, quotes, ocean/air freight, vehicles, parcels, and documentation. How may I assist you today?
+
+Q31. What's up
+I’m here and ready to help with ACOCAM shipping, tracking, quotes, and logistics questions. What can I do for you today?
+
+Q32. How's it going
+I’m doing well, thank you! I’m here to help with ACOCAM shipping, tracking, quotes, and logistics questions. What can I do for you?
+
+Q33. How is it going
+I’m doing well, thank you! I’m here to help with ACOCAM shipping, tracking, quotes, and logistics questions. What can I do for you?
+
+Q34. Nice to meet you
+Nice to meet you too! I’m the ACOCAM Trading Inc. assistant. I can help with shipping, tracking, quotes, and logistics questions. How may I assist you today?
+
+Q35. Pleased to meet you
+Pleased to meet you! I’m here to help with ACOCAM services — shipping, tracking, quotes, and general logistics questions. What do you need?
+
+Q36. Hope you're doing well
+Thank you — I’m here and ready to help! Ask me about ACOCAM shipping, tracking, quotes, freight options, or tap a button below.
+
+Q37. Are you there
+Yes, I’m here! How can I help with ACOCAM shipping, tracking, a quote, or general logistics questions today?
+
+Q38. Anyone there
+Yes — I’m the ACOCAM assistant. I can help with shipping questions, tracking, quotes, and connecting you with our team. What do you need?
+
+Q39. Good to see you
+Good to see you too! Welcome to ACOCAM Trading Inc. How can I help with your shipping or logistics needs today?
+
+Q40. Hi ACOCAM
+Hi! Welcome to ACOCAM Trading Inc. I can help with shipping, tracking, quotes, ocean/air freight, vehicles, parcels, and documentation. How may I assist you today?
+
+Q41. Hello ACOCAM
+Hello! Welcome to ACOCAM Trading Inc. Ask me about our services, tracking, quotes, or contact details — or tap a button below.
+
+Q42. Morning
+Good morning! Welcome to ACOCAM Trading Inc. How can I help with your shipping or logistics needs today?
+
+Q43. Afternoon
+Good afternoon! Welcome to ACOCAM Trading Inc. I can help with quotes, tracking, freight options, and general company questions.
+
+Q44. Evening
+Good evening! Welcome to ACOCAM Trading Inc. Feel free to ask about our services, tracking, or how to get a quote.
+
+Q45. How do you do
+Hello! Welcome to ACOCAM Trading Inc. I’m doing well and ready to help with shipping, tracking, quotes, and logistics. How may I assist you today?

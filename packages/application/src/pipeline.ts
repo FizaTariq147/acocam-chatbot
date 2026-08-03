@@ -15,11 +15,17 @@ import {
   PromptEngine,
   ToolEngine,
   WorkflowEngine,
-  acocamHumanFallback,
+  acocamHumanFallbackLocalized,
   loginPrompt,
+  accountSignupGuide,
   profileToWorkflowSlots,
   extractTrackingNumber,
+  localeString,
+  promptsForLanguage,
+  resolveTurnLanguage,
+  workflowsForLanguage,
   type PortalUrls,
+  type SupportedLang,
   type TenantPack,
 } from '@agent-platform/engines';
 
@@ -44,14 +50,19 @@ export interface TurnInput {
   message: string;
   actionId?: string;
   customerAuthToken?: string;
+  /** Requested conversation language (en | fr). Falls back to session or agent default. */
+  language?: string;
 }
 
 
-function defaultActionsForUser(input: TurnInput): ActionButton[] {
+function defaultActionsForUser(input: TurnInput, pack: TenantPack, lang: SupportedLang): ActionButton[] {
+  const quoteLabel = input.customerAuthToken
+    ? localeString(pack, lang, 'action.quoteAuth', 'Book shipment')
+    : localeString(pack, lang, 'action.quote', 'Get a quote');
   return [
-    { id: 'quote.request', label: input.customerAuthToken ? 'Book shipment' : 'Get a quote' },
-    { id: 'shipment.track', label: 'Track shipment' },
-    { id: 'support.human', label: 'Talk to human' },
+    { id: 'quote.request', label: quoteLabel },
+    { id: 'shipment.track', label: localeString(pack, lang, 'action.track', 'Track shipment') },
+    { id: 'support.human', label: localeString(pack, lang, 'action.human', 'Talk to human') },
   ];
 }
 
@@ -69,31 +80,45 @@ function resolveWorkflow(
   pack: TenantPack,
   input: TurnInput,
   workflowId: string,
+  lang: SupportedLang,
 ): NonNullable<TenantPack['workflows'][string]> | undefined {
+  const wfs = workflowsForLanguage(pack, lang);
   if (
     input.customerAuthToken &&
     (workflowId === 'quote_request' || workflowId === 'book_shipment') &&
-    pack.workflows['book_shipment']
+    wfs['book_shipment']
   ) {
-    return pack.workflows['book_shipment'];
+    return wfs['book_shipment'];
   }
-  return pack.workflows[workflowId];
+  return wfs[workflowId];
+}
+
+/** Greeting small-talk — not a logistics FAQ even with "?". */
+function looksLikeConversationalSmallTalk(message: string): boolean {
+  const m = normalizeShortMessage(message)
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  return /^(how are you|how r u|how are u|how s it going|how is it going|how do you do|hope you re doing well|hope you're doing well|comment ca va|comment ça va|comment allez vous|comment vas tu|comment va tu|ca va|ça va|what s up|whats up|sup|vous allez bien|comment ca va aujourd hui)\b/.test(
+    m,
+  );
 }
 
 function looksLikeFaqQuestion(message: string): boolean {
   const m = message.trim().toLowerCase();
   if (!m || m.length < 2) return false;
+  if (looksLikeConversationalSmallTalk(message)) return false;
   if (m.includes('?')) return true;
-  return /^(what|who|where|when|why|how|do you|does|can you|can i|is |are |which|tell me|explain|please tell|i (have a|need a) question)\b/.test(
+  return /^(what|who|where|when|why|how|do you|does|can you|can i|is |are |which|tell me|explain|please tell|i (have a|need a) question|quoi|qui|où|comment|pourquoi|estce|puisje|pouvez|avez|faites|dites|expliquez|je (veux|voudrais) savoir)\b/.test(
     m,
   );
 }
 
 function looksLikeGreeting(message: string): boolean {
-  const m = message.trim().toLowerCase().replace(/[!.,]+$/g, '');
+  const m = normalizeShortMessage(message);
   if (!m || m.length > 80) return false;
-  return /^(hi|hello|hey|hola|bonjour|good\s*(morning|afternoon|evening|day)|greetings|howdy|yo|salam|assalamu\s*alaikum|hiya|helo|hii+|helloo+)\b/.test(
-    m,
+  const norm = m.normalize('NFD').replace(/\p{M}/gu, '');
+  return /^(hi|hello|hey|hola|bonjour|salut|bonsoir|coucou|allo|allô|bonne journee|bonne journée|good\s*(morning|afternoon|evening|day)|greetings|howdy|yo|salam|assalamu\s*alaikum|hiya|helo|hii+|helloo+|comment ca va|comment allez vous|ca va|hi there|hello there|nice to meet|pleased to meet|good to see|are you there|anyone there|enchanté|enchantee|ravi de vous parler)\b/.test(
+    norm,
   );
 }
 
@@ -109,17 +134,17 @@ function normalizeShortMessage(message: string): string {
 function looksLikeThanksOnly(message: string): boolean {
   const m = normalizeShortMessage(message);
   if (!m || looksLikeGoodbye(message)) return false;
-  return /^(thanks|thank you|thx|ty|much appreciated|appreciate it|ok thanks)\b/.test(m);
+  return /^(thanks|thank you|thx|ty|much appreciated|appreciate it|ok thanks|merci|merci beaucoup)\b/.test(m);
 }
 
 /** Goodbye — including "thank you bye", "byee", "thanks bye". */
 function looksLikeGoodbye(message: string): boolean {
   const m = normalizeShortMessage(message);
   if (!m) return false;
-  if (/^(bye+|goodbye+|see you|see ya|good night|take care|that('|’)s all|nothing else)\b/.test(m)) {
+  if (/^(bye+|goodbye+|see you|see ya|good night|take care|that('|’)s all|nothing else|au revoir|a bientot|à bientôt|bonne nuit|bonne journée)\b/.test(m)) {
     return true;
   }
-  return /\b(bye|goodbye)\b/.test(m);
+  return /\b(bye|goodbye|au revoir)\b/.test(m);
 }
 
 /** Hi / hello / good morning — not thanks or bye. */
@@ -128,9 +153,11 @@ function isPureGreetingMessage(message: string): boolean {
   if (!m || extractTrackingNumber(m)) return false;
   if (looksLikeTransactional(m) || looksLikeFaqQuestion(m)) return false;
   if (looksLikeThanksOnly(message) || looksLikeGoodbye(message)) return false;
+  if (looksLikeConversationalSmallTalk(message)) return false;
   if (looksLikeGreeting(m)) return true;
-  return /^(hi|hey|hello|hiya|yo|howdy|greetings|help|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening)\b/.test(
-    m,
+  const norm = m.normalize('NFD').replace(/\p{M}/gu, '');
+  return /^(hi|hey|hello|hiya|yo|howdy|greetings|help|good\s+(?:morning|afternoon|evening|day)|morning|afternoon|evening|bonjour|salut|bonsoir|coucou|allo|allô|aide|hi there|hello there)\b/.test(
+    norm,
   );
 }
 
@@ -169,7 +196,7 @@ function looksLikeTransactional(message: string): boolean {
   ) {
     return false;
   }
-  return /\b(book|get a quote|request a quote|need a quote|i want to ship|ship my|send my|track my|track now|track shipment|start a booking)\b/.test(
+  return /\b(book|get a quote|request a quote|need a quote|i want to ship|ship my|send my|track my|track now|track shipment|start a booking|réserver|devis|expédier|envoyer|suivre mon|suivi|je veux expédier|demander un devis|obtenir un devis)\b/.test(
     m,
   );
 }
@@ -273,50 +300,47 @@ function isNoiseMessage(message: string): boolean {
   return false;
 }
 
-function thanksReplyMessage(): string {
-  return [
-    "You're welcome!",
-    '',
-    'If you need anything else — tracking, a quote, or service information — just ask.',
-    'Have a great day.',
-  ].join('\n');
+function thanksReplyMessage(pack: TenantPack, lang: SupportedLang): string {
+  return localeString(
+    pack,
+    lang,
+    'thanksReply',
+    "You're welcome!\n\nIf you need anything else — tracking, a quote, or service information — just ask.\nHave a great day.",
+  );
 }
 
-function goodbyeReplyMessage(thanksIncluded: boolean): string {
-  if (thanksIncluded) {
-    return [
-      "You're welcome — goodbye!",
-      '',
-      'Thank you for contacting ACOCAM Trading Inc. Safe travels with your cargo — return anytime if you need help.',
-    ].join('\n');
-  }
-  return [
-    'Goodbye!',
-    '',
-    'Thank you for contacting ACOCAM Trading Inc. Safe travels with your cargo — return anytime if you need help.',
-  ].join('\n');
+function goodbyeReplyMessage(pack: TenantPack, lang: SupportedLang, thanksIncluded: boolean): string {
+  const key = thanksIncluded ? 'goodbyeThanksReply' : 'goodbyeReply';
+  return localeString(
+    pack,
+    lang,
+    key,
+    thanksIncluded
+      ? "You're welcome — goodbye!\n\nThank you for contacting ACOCAM Trading Inc."
+      : 'Goodbye!\n\nThank you for contacting ACOCAM Trading Inc.',
+  );
 }
 
-function helpPromptMessage(input: TurnInput): string {
-  const bookOrQuote = input.customerAuthToken ? 'book a shipment' : 'get a quote';
-  return [
-    'How can I help you today?',
-    '',
-    `I can help you **${bookOrQuote}**, **track a shipment**, answer questions about ACOCAM services and destinations, or connect you with a human agent.`,
-    '',
-    'Choose an option below or type your question.',
-  ].join('\n');
+function helpPromptMessage(input: TurnInput, pack: TenantPack, lang: SupportedLang): string {
+  const bookOrQuote = input.customerAuthToken
+    ? localeString(pack, lang, 'helpBookOrQuoteAuth', 'book a shipment')
+    : localeString(pack, lang, 'helpBookOrQuoteGuest', 'get a quote');
+  const template = localeString(
+    pack,
+    lang,
+    'helpPrompt',
+    'How can I help you today?\n\nI can help you **{{bookOrQuote}}**, **track a shipment**, answer questions about ACOCAM services and destinations, or connect you with a human agent.\n\nChoose an option below or type your question.',
+  );
+  return template.replace('{{bookOrQuote}}', bookOrQuote);
 }
 
-/** Formal reply when the user sends random / invalid characters. */
-function noiseReplyMessage(): string {
-  return [
-    'I could not understand that message.',
-    '',
-    'Please enter a clear question in English — for example about shipping rates, tracking a shipment, requesting a quote, documents, or ACOCAM services.',
-    '',
-    'You may also use the buttons below, or type **talk to human** to speak with an ACOCAM agent.',
-  ].join('\n');
+function noiseReplyMessage(pack: TenantPack, lang: SupportedLang): string {
+  return localeString(
+    pack,
+    lang,
+    'noiseReply',
+    'I could not understand that message.\n\nPlease enter a clear question in English or French.',
+  );
 }
 
 function getPortalUrls(pack: TenantPack, env: NodeJS.ProcessEnv): PortalUrls {
@@ -338,26 +362,26 @@ function getPortalUrls(pack: TenantPack, env: NodeJS.ProcessEnv): PortalUrls {
   };
 }
 
-function quotePortalAction(portal: PortalUrls): ActionButton {
+function quotePortalAction(portal: PortalUrls, pack: TenantPack, lang: SupportedLang): ActionButton {
   return {
     id: 'portal.quote',
-    label: 'Get a quote online',
+    label: localeString(pack, lang, 'action.quoteOnline', 'Get a quote online'),
     url: portal.quoteUrl ?? 'https://acocamtrading.ca/get-quote/',
   };
 }
 
-function loginActions(portal: PortalUrls): ActionButton[] {
+function loginActions(portal: PortalUrls, pack: TenantPack, lang: SupportedLang): ActionButton[] {
   const sameAuthUrl = portal.signupUrl === portal.loginUrl;
   const authButtons: ActionButton[] = sameAuthUrl
-    ? [{ id: 'portal.login', label: 'Log in / Create account', url: portal.loginUrl }]
+    ? [{ id: 'portal.login', label: localeString(pack, lang, 'action.loginCombined', 'Log in / Create account'), url: portal.loginUrl }]
     : [
-        { id: 'portal.login', label: 'Log in', url: portal.loginUrl },
-        { id: 'portal.signup', label: 'Create account', url: portal.signupUrl },
+        { id: 'portal.login', label: localeString(pack, lang, 'action.login', 'Log in'), url: portal.loginUrl },
+        { id: 'portal.signup', label: localeString(pack, lang, 'action.signup', 'Create account'), url: portal.signupUrl },
       ];
   return [
     ...authButtons,
-    quotePortalAction(portal),
-    { id: 'support.human', label: 'Talk to human' },
+    quotePortalAction(portal, pack, lang),
+    { id: 'support.human', label: localeString(pack, lang, 'action.human', 'Talk to human') },
   ];
 }
 
@@ -365,7 +389,8 @@ function toolContext(
   pack: TenantPack,
   svc: PlatformServices,
   input: TurnInput,
-  slots?: Record<string, string>,
+  slots: Record<string, string> | undefined,
+  lang: SupportedLang,
 ) {
   return {
     env: svc.env,
@@ -373,13 +398,44 @@ function toolContext(
     customerAuthToken: input.customerAuthToken,
     slots,
     portal: getPortalUrls(pack, svc.env),
+    language: lang,
+    locale: pack.locales[lang] ?? pack.locales.en ?? {},
   };
 }
-function refusesSensitive(message: string, patterns: string[]): string | null {
+
+function looksLikeAccountHelp(message: string): boolean {
+  const m = message
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (!m) return false;
+  if (/\b(my account|account details|account status|delete account|close account|mon compte|details du compte)\b/.test(m)) {
+    return false;
+  }
+  return /\b(create (an? )?account|sign[\s-]?up|register(ation)?|open (an? )?account|make (an? )?account|need (an? )?account|get (an? )?account|how (?:do|can|should|to) i (?:create|sign[\s-]?up|register|log[\s-]?in|login)|how to (?:create|sign[\s-]?up|register|log[\s-]?in|login)|how (?:do|can|should) i (?:log[\s-]?in|login)|log[\s-]?in (?:help|page|link)|login (?:help|page|link)|creer un compte|creer mon compte|comment creer (?:un )?compte|inscription|sinscrire|s inscrire|me connecter|comment me connecter|ouvrir un compte|connexion au compte)\b/.test(
+    m,
+  );
+}
+
+function loginPromptForLang(pack: TenantPack, portal: PortalUrls, lang: SupportedLang): string {
+  return loginPrompt(portal, pack.locales[lang] ?? pack.locales.en);
+}
+
+function accountHelpMessage(pack: TenantPack, portal: PortalUrls, lang: SupportedLang): string {
+  return accountSignupGuide(portal, pack.locales[lang] ?? pack.locales.en);
+}
+
+function refusesSensitive(message: string, patterns: string[], pack: TenantPack, lang: SupportedLang): string | null {
   const lower = message.toLowerCase();
   for (const p of patterns) {
     if (lower.includes(p.toLowerCase())) {
-      return 'For your security, please never share passwords, full card numbers, or government IDs in chat. A human agent can help via a secure channel.';
+      return localeString(
+        pack,
+        lang,
+        'safety.refusal',
+        'For your security, please never share passwords, full card numbers, or government IDs in chat. A human agent can help via a secure channel.',
+      );
     }
   }
   return null;
@@ -404,45 +460,57 @@ export class ConversationPipeline {
 
     const state: ConversationState = { ...session.state, slots: { ...session.state.slots } };
     state.turnCount += 1;
+    const lang = resolveTurnLanguage(pack, agent, input.message, input.language, state.language);
+    state.language = lang;
 
-    const refusal = refusesSensitive(input.message, pack.policies.escalation.refusalPatterns);
+    const refusal = refusesSensitive(input.message, pack.policies.escalation.refusalPatterns, pack, lang);
     if (refusal) {
       return this.finish(pack, input, session.sessionId, state, {
         message: refusal,
         source: 'safety',
         intent: 'safety.refusal',
         confidence: 1,
-        actions: defaultActionsForUser(input),
+        actions: defaultActionsForUser(input, pack, lang),
       });
     }
 
     if (!input.actionId && state.workflow?.status !== 'active') {
       if (looksLikeGoodbye(input.message)) {
-        const thanksIncluded = /\b(thank|thanks|thx|ty)\b/i.test(input.message);
+        const thanksIncluded = /\b(thank|thanks|thx|ty|merci)\b/i.test(input.message);
         return this.finish(pack, input, session.sessionId, state, {
-          message: goodbyeReplyMessage(thanksIncluded),
+          message: goodbyeReplyMessage(pack, lang, thanksIncluded),
           source: 'prompt',
           intent: 'conversational.goodbye',
           confidence: 1,
-          actions: defaultActionsForUser(input),
+          actions: defaultActionsForUser(input, pack, lang),
         });
       }
       if (looksLikeThanksOnly(input.message)) {
         return this.finish(pack, input, session.sessionId, state, {
-          message: thanksReplyMessage(),
+          message: thanksReplyMessage(pack, lang),
           source: 'prompt',
           intent: 'conversational.thanks',
           confidence: 1,
-          actions: defaultActionsForUser(input),
+          actions: defaultActionsForUser(input, pack, lang),
         });
       }
       if (isPureGreetingMessage(input.message)) {
         return this.finish(pack, input, session.sessionId, state, {
-          message: helpPromptMessage(input),
+          message: helpPromptMessage(input, pack, lang),
           source: 'prompt',
           intent: 'support.help',
           confidence: 1,
-          actions: defaultActionsForUser(input),
+          actions: defaultActionsForUser(input, pack, lang),
+        });
+      }
+      if (looksLikeAccountHelp(input.message)) {
+        const portal = getPortalUrls(pack, this.svc.env);
+        return this.finish(pack, input, session.sessionId, state, {
+          message: accountHelpMessage(pack, portal, lang),
+          source: 'auth',
+          intent: 'account.signup',
+          confidence: 1,
+          actions: loginActions(portal, pack, lang),
         });
       }
     }
@@ -453,11 +521,11 @@ export class ConversationPipeline {
       isNoiseMessage(input.message)
     ) {
       return this.finish(pack, input, session.sessionId, state, {
-        message: noiseReplyMessage(),
+        message: noiseReplyMessage(pack, lang),
         source: 'prompt',
         intent: 'support.clarify',
         confidence: 1,
-        actions: defaultActionsForUser(input),
+        actions: defaultActionsForUser(input, pack, lang),
       });
     }
 
@@ -475,7 +543,8 @@ export class ConversationPipeline {
     }
 
     if (state.workflow?.status === 'active' && features.workflows) {
-      const def = pack.workflows[state.workflow.workflowId];
+      const wfs = workflowsForLanguage(pack, lang);
+      const def = wfs[state.workflow.workflowId];
       if (def) {
         const userText =
           input.actionId === 'cancel' || input.actionId === 'reset' ? 'cancel' : input.message;
@@ -492,7 +561,7 @@ export class ConversationPipeline {
           if (advanced.progress.status === 'complete' && def.onComplete?.action === 'tool' && def.onComplete.toolId) {
             const toolDef = pack.tools[def.onComplete.toolId];
             if (toolDef) {
-              const ctx = toolContext(pack, this.svc, input, state.slots);
+              const ctx = toolContext(pack, this.svc, input, state.slots, lang);
               const toolResult = await this.svc.tool.execute(toolDef, ctx);
               const toolMsg = this.svc.tool.formatResult(toolDef, toolResult, ctx);
               const portal = getPortalUrls(pack, this.svc.env);
@@ -503,7 +572,7 @@ export class ConversationPipeline {
                 source: 'workflow+tool',
                 intent: def.intent,
                 confidence: 0.9,
-                actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
+                actions: toolResult.authRequired ? loginActions(portal, pack, lang) : defaultActionsForUser(input, pack, lang),
               });
             }
           }
@@ -516,7 +585,7 @@ export class ConversationPipeline {
             source: 'workflow',
             intent: def.intent,
             confidence: 0.9,
-            actions: defaultActionsForUser(input),
+            actions: defaultActionsForUser(input, pack, lang),
           });
         }
 
@@ -527,7 +596,7 @@ export class ConversationPipeline {
           source: 'workflow',
           intent: def.intent,
           confidence: 0.95,
-          actions: [{ id: 'cancel', label: 'Cancel' }],
+          actions: [{ id: 'cancel', label: localeString(pack, lang, 'action.cancel', 'Cancel') }],
         });
       }
     }
@@ -541,6 +610,7 @@ export class ConversationPipeline {
       !input.actionId &&
       (looksLikeFaqQuestion(input.message) ||
         looksLikeGreeting(input.message) ||
+        looksLikeConversationalSmallTalk(input.message) ||
         looksLikeThanksOrBye(input.message)) &&
       !looksLikeTransactional(input.message) &&
       (detected.handler === 'workflow' ||
@@ -578,7 +648,7 @@ export class ConversationPipeline {
     }
 
     if (detected.handler === 'workflow' && features.workflows && intentDef?.workflowId) {
-      const def = resolveWorkflow(pack, input, intentDef.workflowId);
+      const def = resolveWorkflow(pack, input, intentDef.workflowId, lang);
       if (def) {
         return this.startWorkflow(pack, input, session.sessionId, state, def, detected.intent, detected.confidence);
       }
@@ -589,11 +659,11 @@ export class ConversationPipeline {
       if (toolDef.requireAuth && !input.customerAuthToken) {
         const portal = getPortalUrls(pack, this.svc.env);
         return this.finish(pack, input, session.sessionId, state, {
-          message: loginPrompt(portal),
+          message: loginPromptForLang(pack, portal, lang),
           source: 'auth',
           intent: detected.intent,
           confidence: detected.confidence,
-          actions: loginActions(portal),
+          actions: loginActions(portal, pack, lang),
         });
       }
       const extracted = extractTrackingNumber(input.message);
@@ -601,9 +671,10 @@ export class ConversationPipeline {
         state.slots.trackingNumber = extracted;
       }
       if (toolDef.pathParams?.includes('trackingNumber') && !state.slots.trackingNumber) {
+        const wfs = workflowsForLanguage(pack, lang);
         const trackWf =
-          (intentDef.workflowId && pack.workflows[intentDef.workflowId]) ||
-          Object.values(pack.workflows).find((w) => w.id.includes('track'));
+          (intentDef.workflowId && wfs[intentDef.workflowId]) ||
+          Object.values(wfs).find((w) => w.id.includes('track'));
         if (trackWf) {
           return this.startWorkflow(
             pack,
@@ -616,7 +687,7 @@ export class ConversationPipeline {
           );
         }
       }
-      const ctx = toolContext(pack, this.svc, input, state.slots);
+      const ctx = toolContext(pack, this.svc, input, state.slots, lang);
       const toolResult = await this.svc.tool.execute(toolDef, ctx);
       state.activeIntent = detected.intent;
       state.phase = 'ready';
@@ -628,7 +699,7 @@ export class ConversationPipeline {
         source: 'tool',
         intent: detected.intent,
         confidence: detected.confidence,
-        actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
+        actions: toolResult.authRequired ? loginActions(portal, pack, lang) : defaultActionsForUser(input, pack, lang),
       });
     }
 
@@ -640,11 +711,11 @@ export class ConversationPipeline {
     if (knowledgeTurn) return knowledgeTurn;
 
     return this.finish(pack, input, session.sessionId, state, {
-      message: acocamHumanFallback(input.message),
+      message: acocamHumanFallbackLocalized(input.message, lang),
       source: 'assistant',
       intent: detected.intent,
       confidence: 0.6,
-      actions: defaultActionsForUser(input),
+      actions: defaultActionsForUser(input, pack, lang),
     });
   }
 
@@ -658,16 +729,20 @@ export class ConversationPipeline {
     const agent = this.svc.config.getAgent(pack, input.agentId);
     if (!agent) return null;
     const features = tenantFeatures(pack);
+    const lang = resolveTurnLanguage(pack, agent, input.message, input.language, state.language);
+    state.language = lang;
 
-    const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4);
+    const hits = await this.svc.knowledge.search(input.tenantId, input.message, 4, lang);
+    if (!hits.length) return null;
 
     const history: LlmMessage[] = session.messages.slice(-8).map((m) => ({
       role: (m.role === 'system' || m.role === 'assistant' ? m.role : 'user') as LlmMessage['role'],
       content: m.content,
     }));
+    const promptBundle = promptsForLanguage(pack, lang);
     const llmMessages = this.svc.prompt.compose({
-      system: pack.prompts.system,
-      safety: pack.prompts.safety,
+      system: promptBundle.system,
+      safety: promptBundle.safety,
       companyName: pack.settings.name,
       hits,
       history,
@@ -678,6 +753,7 @@ export class ConversationPipeline {
       agent,
       customerName: state.slots.contact_name,
       priorIntent: state.activeIntent,
+      language: lang,
     });
 
     state.activeIntent = detected.intent;
@@ -702,7 +778,7 @@ export class ConversationPipeline {
     });
 
     if (features.escalation && escLate.shouldEscalate && escLate.mode === 'offer') {
-      message += `\n\n${pack.policies.escalation.offerPhrases[0] ?? 'Would you like a human agent?'}`;
+      message += `\n\n${localeString(pack, lang, 'escalation.offer', pack.policies.escalation.offerPhrases[0] ?? 'Would you like a human agent?')}`;
     } else if (features.escalation && escLate.shouldEscalate && escLate.mode === 'transfer') {
       return this.escalateNow(pack, input, session, state, escLate.primaryReason, message);
     }
@@ -712,7 +788,7 @@ export class ConversationPipeline {
       source: answer.source,
       intent: detected.intent,
       confidence: answer.confidence,
-      actions: defaultActionsForUser(input),
+      actions: defaultActionsForUser(input, pack, lang),
       citations: answer.citations,
     });
   }
@@ -720,12 +796,13 @@ export class ConversationPipeline {
   private async resolveCustomerProfile(
     pack: TenantPack,
     input: TurnInput,
+    lang: SupportedLang,
   ): Promise<{ slots: Record<string, string>; authRequired: boolean }> {
     if (!input.customerAuthToken) return { slots: {}, authRequired: false };
     const profileTool = pack.tools['get_profile'];
     if (!profileTool) return { slots: {}, authRequired: false };
 
-    const result = await this.svc.tool.execute(profileTool, toolContext(pack, this.svc, input));
+    const result = await this.svc.tool.execute(profileTool, toolContext(pack, this.svc, input, undefined, lang));
     if (result.authRequired || result.httpStatus === 401 || result.httpStatus === 403) {
       return { slots: {}, authRequired: true };
     }
@@ -743,29 +820,37 @@ export class ConversationPipeline {
     confidence: number,
   ): Promise<TurnResponse> {
     const portal = getPortalUrls(pack, this.svc.env);
+    const lang = resolveTurnLanguage(
+      pack,
+      this.svc.config.getAgent(pack, input.agentId)!,
+      input.message,
+      input.language,
+      state.language,
+    );
+    state.language = lang;
     if (def.id === 'book_shipment') {
       state.slots.bookingIntent = 'true';
     }
     if (def.requireAuth && !input.customerAuthToken) {
       return this.finish(pack, input, sessionId, state, {
-        message: loginPrompt(portal),
+        message: loginPromptForLang(pack, portal, lang),
         source: 'auth',
         intent,
         confidence,
-        actions: loginActions(portal),
+        actions: loginActions(portal, pack, lang),
       });
     }
 
     let prefill = { ...state.slots };
     if (def.requireAuth && input.customerAuthToken) {
-      const profile = await this.resolveCustomerProfile(pack, input);
+      const profile = await this.resolveCustomerProfile(pack, input, lang);
       if (profile.authRequired) {
         return this.finish(pack, input, sessionId, state, {
-          message: loginPrompt(portal),
+          message: loginPromptForLang(pack, portal, lang),
           source: 'auth',
           intent,
           confidence,
-          actions: loginActions(portal),
+          actions: loginActions(portal, pack, lang),
         });
       }
       prefill = { ...prefill, ...profile.slots };
@@ -784,7 +869,7 @@ export class ConversationPipeline {
     if (started.progress.status === 'complete' && def.onComplete?.action === 'tool' && def.onComplete.toolId) {
       const toolDef = pack.tools[def.onComplete.toolId];
       if (toolDef) {
-        const ctx = toolContext(pack, this.svc, input, state.slots);
+        const ctx = toolContext(pack, this.svc, input, state.slots, lang);
         const toolResult = await this.svc.tool.execute(toolDef, ctx);
         const toolMsg = this.svc.tool.formatResult(toolDef, toolResult, ctx);
         state.workflow = null;
@@ -793,7 +878,7 @@ export class ConversationPipeline {
           source: 'workflow+tool',
           intent,
           confidence: 0.9,
-          actions: toolResult.authRequired ? loginActions(portal) : defaultActionsForUser(input),
+          actions: toolResult.authRequired ? loginActions(portal, pack, lang) : defaultActionsForUser(input, pack, lang),
         });
       }
     }
@@ -803,7 +888,7 @@ export class ConversationPipeline {
       source: 'workflow',
       intent,
       confidence,
-      actions: [{ id: 'cancel', label: 'Cancel' }],
+      actions: [{ id: 'cancel', label: localeString(pack, lang, 'action.cancel', 'Cancel') }],
     });
   }
 
@@ -815,6 +900,14 @@ export class ConversationPipeline {
     reason: string,
     preface?: string,
   ): Promise<TurnResponse> {
+    const agent = this.svc.config.getAgent(pack, input.agentId)!;
+    const lang = resolveTurnLanguage(
+      pack,
+      agent,
+      input.message,
+      input.language,
+      state.language,
+    );
     const summary = this.svc.escalation.buildSummary(
       [...session.messages, { role: 'user', content: input.message }],
       reason,
@@ -833,8 +926,13 @@ export class ConversationPipeline {
     state.workflow = null;
     const message = [
       preface,
-      'I am connecting you with a human agent. A summary of this conversation has been prepared for them.',
-      `Reference: ${ticket.id}`,
+      localeString(
+        pack,
+        lang,
+        'escalation.connecting',
+        'I am connecting you with a human agent. A summary of this conversation has been prepared for them.',
+      ),
+      localeString(pack, lang, 'escalation.reference', 'Reference: {{id}}').replace('{{id}}', ticket.id),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -844,7 +942,7 @@ export class ConversationPipeline {
       source: 'escalation',
       intent: 'support.human',
       confidence: 1,
-      actions: [{ id: 'reset', label: 'Start over' }],
+      actions: [{ id: 'reset', label: localeString(pack, lang, 'action.reset', 'Start over') }],
       escalate: true,
       escalationId: ticket.id,
     });
@@ -917,20 +1015,21 @@ export class ConversationPipeline {
 export function publicActionsForTenant(
   pack: TenantPack,
   env: NodeJS.ProcessEnv = process.env,
+  lang: SupportedLang = 'en',
 ): ActionButton[] {
   const portal = getPortalUrls(pack, env);
   const sameAuthUrl = portal.signupUrl === portal.loginUrl;
   const authButtons: ActionButton[] = sameAuthUrl
-    ? [{ id: 'portal.login', label: 'Log in / Create account', url: portal.loginUrl }]
+    ? [{ id: 'portal.login', label: localeString(pack, lang, 'action.loginCombined', 'Log in / Create account'), url: portal.loginUrl }]
     : [
-        { id: 'portal.login', label: 'Log in', url: portal.loginUrl },
-        { id: 'portal.signup', label: 'Sign up', url: portal.signupUrl },
+        { id: 'portal.login', label: localeString(pack, lang, 'action.login', 'Log in'), url: portal.loginUrl },
+        { id: 'portal.signup', label: localeString(pack, lang, 'action.signup', 'Sign up'), url: portal.signupUrl },
       ];
   return [
-    { id: 'quote.request', label: 'Get a quote' },
-    { id: 'shipment.track', label: 'Track shipment' },
+    { id: 'quote.request', label: localeString(pack, lang, 'action.quote', 'Get a quote') },
+    { id: 'shipment.track', label: localeString(pack, lang, 'action.track', 'Track shipment') },
     ...authButtons,
-    quotePortalAction(portal),
-    { id: 'support.human', label: 'Talk to human' },
+    quotePortalAction(portal, pack, lang),
+    { id: 'support.human', label: localeString(pack, lang, 'action.human', 'Talk to human') },
   ];
 }

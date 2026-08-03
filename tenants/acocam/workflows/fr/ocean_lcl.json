@@ -1,0 +1,17 @@
+{
+  "id": "ocean_lcl",
+  "intent": "ocean.lcl",
+  "label": "Fret maritime LCL",
+  "requireAuth": true,
+  "intro": "Recueillons les détails pour un groupage maritime / LCL.",
+  "steps": [
+    { "id": "packages", "prompt": "Combien de colis ?", "required": true, "validator": "text" },
+    { "id": "contents", "prompt": "Contenu des colis ?", "required": true, "validator": "text" },
+    { "id": "weight_dims", "prompt": "Poids et dimensions / CBM ?", "required": true, "validator": "text" },
+    { "id": "origin", "prompt": "Origine ?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Destination ?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Courriel de suivi ?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Demande LCL recueillie pour examen de devis.",
+  "onComplete": { "action": "escalation" }
+}

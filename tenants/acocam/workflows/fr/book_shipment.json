@@ -1,0 +1,44 @@
+{
+  "id": "book_shipment",
+  "intent": "quote.request",
+  "label": "Réserver un envoi",
+  "requireAuth": true,
+  "intro": "Vous êtes connecté — je peux soumettre une **réservation d'envoi** à votre compte ACOCAM à partir de votre profil enregistré.",
+  "steps": [
+    {
+      "id": "origin",
+      "prompt": "Ville et pays d'origine (ex. Montréal, Canada) ?",
+      "required": true,
+      "validator": "text",
+      "help": "Lieu de ramassage / expéditeur."
+    },
+    {
+      "id": "destination",
+      "prompt": "Ville et pays de destination (ex. Douala, Cameroun) ?",
+      "required": true,
+      "validator": "text",
+      "help": "Lieu de livraison / destinataire."
+    },
+    {
+      "id": "consignee_name",
+      "prompt": "Nom du destinataire (écrivez **moi** si c'est vous) ?",
+      "required": true,
+      "validator": "text",
+      "help": "Personne ou entreprise recevant la marchandise à destination."
+    },
+    {
+      "id": "cargo",
+      "prompt": "Décrivez brièvement la marchandise.",
+      "required": true,
+      "validator": "text"
+    },
+    {
+      "id": "weight",
+      "prompt": "Poids total approximatif (kg) ou CBM ?",
+      "required": true,
+      "validator": "text"
+    }
+  ],
+  "completionMessage": "Envoi de votre réservation à ACOCAM…",
+  "onComplete": { "action": "tool", "toolId": "create_quotation" }
+}

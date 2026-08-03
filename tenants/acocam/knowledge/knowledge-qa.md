@@ -104,7 +104,7 @@ No problem. If you need help later with shipping, tracking, or a quote, I’m he
 
 Q24. What languages do you support?
 
-I primarily assist in English. For French or other language needs, our team can help — ask to speak with a human agent if you prefer.
+I assist in **English** and **French**. You can chat with me in either language — for other languages, our team can help; ask to speak with a human agent if you prefer.
 
 Q25. Is this chat free?
 

@@ -1,0 +1,18 @@
+{
+  "id": "vehicle",
+  "intent": "vehicle.ship",
+  "label": "Expédition de véhicule",
+  "requireAuth": true,
+  "intro": "Je peux recueillir les détails d'expédition de véhicule pour examen par un spécialiste.",
+  "steps": [
+    { "id": "vehicle_type", "prompt": "Type de véhicule (auto, VUS, moto, etc.) ?", "required": true, "validator": "text" },
+    { "id": "year", "prompt": "Année ?", "required": true, "validator": "text" },
+    { "id": "vin", "prompt": "NIV (ou indiquez inconnu) ?", "required": true, "validator": "text" },
+    { "id": "origin", "prompt": "Ville / pays d'origine ?", "required": true, "validator": "text" },
+    { "id": "destination", "prompt": "Ville / pays de destination ?", "required": true, "validator": "text" },
+    { "id": "condition", "prompt": "État / remarques (roulant ou non) ?", "required": true, "validator": "text" },
+    { "id": "contact_email", "prompt": "Courriel de suivi ?", "required": true, "validator": "email" }
+  ],
+  "completionMessage": "Demande d'expédition de véhicule recueillie pour examen de devis.",
+  "onComplete": { "action": "escalation" }
+}

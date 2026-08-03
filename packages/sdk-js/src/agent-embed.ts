@@ -3,6 +3,9 @@ type PublicConfig = {
   agentId: string;
   name: string;
   welcome: string;
+  defaultLanguage?: string;
+  supportedLanguages?: string[];
+  ui?: Record<string, string>;
   theme: {
     primaryColor: string;
     secondaryColor: string;
@@ -23,6 +26,10 @@ type TurnResponse = {
   escalate?: boolean;
 };
 
+type ChatLang = 'en' | 'fr';
+
+const LANG_STORAGE_KEY = 'acocam_chat_lang';
+
 (function () {
   const script = document.currentScript as HTMLScriptElement | null;
   if (!script) return;
@@ -31,6 +38,18 @@ type TurnResponse = {
   const agent = script.getAttribute('data-agent') || 'customer-support';
   const key = script.getAttribute('data-key') || '';
   const apiBase = (script.getAttribute('data-api') || '/v1').replace(/\/$/, '');
+  const langAttr = script.getAttribute('data-lang')?.trim().toLowerCase();
+  const storedLang = (() => {
+    try {
+      const v = localStorage.getItem(LANG_STORAGE_KEY);
+      return v === 'fr' || v === 'en' ? v : null;
+    } catch {
+      return null;
+    }
+  })();
+  /** Default English; override via data-lang or saved user choice. */
+  let currentLang: ChatLang =
+    langAttr === 'fr' ? 'fr' : langAttr === 'en' ? 'en' : storedLang === 'fr' ? 'fr' : 'en';
 
   function parseStoredToken(raw: string): string {
     const trimmed = raw.trim();
@@ -84,6 +103,31 @@ type TurnResponse = {
   let sessionId: string | null = null;
   let config: PublicConfig | null = null;
 
+  function uiText(key: string, fallback: string): string {
+    return config?.ui?.[`ui.${key}`]?.trim() || fallback;
+  }
+
+  function langFlag(lang: ChatLang): string {
+    return lang === 'fr' ? '\u{1F1EB}\u{1F1F7}' : '\u{1F1EC}\u{1F1E7}';
+  }
+
+  function langShortLabel(lang: ChatLang): string {
+    return lang === 'fr'
+      ? uiText('langFrenchShort', 'FR')
+      : uiText('langEnglishShort', 'EN');
+  }
+
+  function langFullLabel(lang: ChatLang): string {
+    return lang === 'fr'
+      ? uiText('langFrench', 'French')
+      : uiText('langEnglish', 'English');
+  }
+
+  async function fetchPublicConfig(lang: ChatLang): Promise<PublicConfig> {
+    const q = lang !== 'en' ? `?lang=${encodeURIComponent(lang)}` : '';
+    return api<PublicConfig>(`/tenants/${tenant}/agents/${agent}/config/public${q}`);
+  }
+
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${apiBase}${path}`, {
       ...init,
@@ -125,9 +169,10 @@ type TurnResponse = {
   }
 
   function showThinking(log: HTMLElement): HTMLElement {
+    const label = config?.ui?.['ui.thinkingLabel'] || 'ACOCAM is thinking';
     const bubble = el('div', { className: 'aap-bubble aap-assistant aap-thinking' });
     bubble.innerHTML =
-      '<span class="aap-think-label">ACOCAM is thinking</span><span class="aap-dots"><i></i><i></i><i></i></span>';
+      `<span class="aap-think-label">${label}</span><span class="aap-dots"><i></i><i></i><i></i></span>`;
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
     return bubble;
@@ -271,18 +316,26 @@ type TurnResponse = {
     }
   }
 
-  async function ensureSession() {
-    if (sessionId) return;
+  async function ensureSession(opts?: { recreate?: boolean }) {
+    if (opts?.recreate) sessionId = null;
+    if (sessionId) return null;
     const created = await api<{ sessionId: string; welcome: string }>(
       `/tenants/${tenant}/agents/${agent}/sessions`,
-      { method: 'POST', body: '{}' },
+      { method: 'POST', body: JSON.stringify({ language: currentLang }) },
     );
     sessionId = created.sessionId;
+    return created;
   }
 
   function messageBody(text: string, actionId?: string): string {
-    const payload: { message: string; actionId?: string; customerAuthToken?: string } = {
+    const payload: {
+      message: string;
+      actionId?: string;
+      customerAuthToken?: string;
+      language?: string;
+    } = {
       message: text || '',
+      language: currentLang,
     };
     if (actionId) payload.actionId = actionId;
     const token = resolveCustomerToken();
@@ -329,10 +382,11 @@ type TurnResponse = {
 
   function adaptActionsForAuth(
     actions: Array<{ id: string; label: string; url?: string }>,
+    bookShipmentLabel: string,
   ): Array<{ id: string; label: string; url?: string }> {
     if (!resolveCustomerToken()) return actions;
     return actions.map((a) =>
-      a.id === 'quote.request' ? { ...a, label: 'Book shipment' } : a,
+      a.id === 'quote.request' ? { ...a, label: bookShipmentLabel } : a,
     );
   }
 
@@ -341,9 +395,10 @@ type TurnResponse = {
     actions: Array<{ id: string; label: string; url?: string }>,
     log: HTMLElement,
     setActions: (actions: Array<{ id: string; label: string; url?: string }>) => void,
+    bookShipmentLabel: string,
   ) {
     container.replaceChildren();
-    for (const action of adaptActionsForAuth(actions)) {
+    for (const action of adaptActionsForAuth(actions, bookShipmentLabel)) {
       const btn = el('button', { type: 'button', className: 'aap-action-btn' }, [action.label]) as HTMLButtonElement;
       btn.style.setProperty('background', '#e8f2f7', 'important');
       btn.style.setProperty('color', 'rgb(3,74,118)', 'important');
@@ -382,6 +437,8 @@ type TurnResponse = {
   }
 
   function mount(cfg: PublicConfig) {
+    config = cfg;
+    let bookShipmentLabel = uiText('actionQuoteAuth', 'Book shipment');
     const isLeft = cfg.theme.position === 'bottom-left';
     const pos = isLeft ? 'left:20px' : 'right:20px';
     const align = isLeft ? 'flex-start' : 'flex-end';
@@ -432,9 +489,21 @@ type TurnResponse = {
       .aap-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid #e2e8f0;background:#f8fafc!important}
       .aap-root .aap-actions .aap-action-btn{border:1px solid ${blue}!important;background:${blueLight}!important;color:${blueDark}!important;border-radius:999px;padding:6px 12px;font-size:12px!important;font-weight:600!important;cursor:pointer;line-height:1.3;-webkit-text-fill-color:${blueDark}!important}
       .aap-root .aap-actions .aap-action-btn:hover{background:#d4e8f2!important;color:${blueDarker}!important;-webkit-text-fill-color:${blueDarker}!important}
-      .aap-form{display:flex;gap:8px;padding:10px;border-top:1px solid #e2e8f0;background:#fff!important}
-      .aap-root .aap-form input{flex:1;border:1px solid #cbd5e1!important;border-radius:10px;padding:10px;background:#fff!important;color:${textDark}!important;font-size:14px!important;-webkit-text-fill-color:${textDark}!important}
-      .aap-root .aap-form input::placeholder{color:#94a3b8!important;opacity:1!important;-webkit-text-fill-color:#94a3b8!important}
+      .aap-form{display:flex;gap:8px;padding:10px;border-top:1px solid #e2e8f0;background:#fff!important;align-items:stretch}
+      .aap-lang-wrap{position:relative;flex-shrink:0}
+      .aap-lang-btn{display:flex!important;align-items:center;gap:6px;height:42px;padding:0 10px!important;border:1px solid #cbd5e1!important;border-radius:10px;background:#fff!important;color:${textDark}!important;font-size:13px!important;font-weight:600!important;cursor:pointer;line-height:1;white-space:nowrap}
+      .aap-lang-btn:hover{background:#f8fafc!important;border-color:#94a3b8!important}
+      .aap-lang-btn .aap-lang-flag{font-size:16px;line-height:1}
+      .aap-lang-btn .aap-lang-caret{font-size:10px;color:#64748b;margin-left:2px}
+      .aap-lang-menu{display:none;position:absolute;bottom:calc(100% + 6px);left:0;min-width:148px;background:#fff!important;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);overflow:hidden;z-index:100000}
+      .aap-lang-menu.open{display:block}
+      .aap-lang-option{display:flex!important;align-items:center;gap:8px;width:100%;padding:10px 12px!important;border:0!important;background:#fff!important;color:#64748b!important;font-size:13px!important;text-align:left;cursor:pointer}
+      .aap-lang-option:hover{background:#f8fafc!important}
+      .aap-lang-option.active{color:${textDark}!important;font-weight:700!important;background:#f1f5f9!important}
+      .aap-lang-option .aap-lang-flag{font-size:16px;line-height:1;flex-shrink:0}
+      .aap-root .aap-form .aap-input-wrap{flex:1;min-width:0}
+      .aap-root .aap-form input.aap-input{flex:1;width:100%;border:1px solid #cbd5e1!important;border-radius:10px;padding:10px;background:#fff!important;color:${textDark}!important;font-size:14px!important;-webkit-text-fill-color:${textDark}!important}
+      .aap-root .aap-form input.aap-input::placeholder{color:#94a3b8!important;opacity:1!important;-webkit-text-fill-color:#94a3b8!important}
       .aap-root .aap-form button.aap-send{background:${blue}!important;color:#fff!important;border:0!important;border-radius:10px;padding:0!important;cursor:pointer;width:44px;min-width:44px;height:42px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
       .aap-root .aap-form button.aap-send svg{width:20px;height:20px;display:block}
       .aap-root .aap-form button.aap-send:disabled{opacity:.6;cursor:not-allowed}
@@ -445,14 +514,21 @@ type TurnResponse = {
     const log = el('div', { className: 'aap-log' });
     const actionsBar = el('div', { className: 'aap-actions' });
     const setActions = (actions: Array<{ id: string; label: string; url?: string }>) => {
-      renderActions(actionsBar, actions, log, setActions);
+      renderActions(actionsBar, actions, log, setActions, bookShipmentLabel);
     };
+
+    const closeLabel = uiText('closeLabel', 'Close chat');
+    const sendLabel = uiText('sendLabel', 'Send message');
+    const dismissLabel = uiText('dismissLabel', 'Dismiss welcome message');
+    const teaserIntroText =
+      cfg.theme.greetingMessage || uiText('teaserIntro', cfg.welcome.split('\n\n')[0] || cfg.welcome);
+    const teaserAssistText = uiText('teaserAssist', 'How may I assist you today?');
 
     let open = false;
     const closeBtn = el('button', {
       type: 'button',
       className: 'aap-close',
-      'aria-label': 'Close chat',
+      'aria-label': closeLabel,
     }, ['×']) as HTMLButtonElement;
 
     const panel = el('div', { className: 'aap-panel' }, [
@@ -464,11 +540,72 @@ type TurnResponse = {
       actionsBar,
     ]);
 
-    renderActions(actionsBar, adaptActionsForAuth(cfg.actions), log, setActions);
+    renderActions(actionsBar, adaptActionsForAuth(cfg.actions, bookShipmentLabel), log, setActions, bookShipmentLabel);
 
-    const input = el('input', { type: 'text', placeholder: 'Type a message…' }) as HTMLInputElement;
+    const input = el('input', {
+      type: 'text',
+      className: 'aap-input',
+      placeholder: uiText('inputPlaceholder', 'Type a message…'),
+    }) as HTMLInputElement;
     input.style.setProperty('background', '#ffffff', 'important');
     input.style.setProperty('color', '#0f172a', 'important');
+    const inputWrap = el('div', { className: 'aap-input-wrap' }, [input]);
+
+    const langMenu = el('div', { className: 'aap-lang-menu', role: 'menu' });
+    const langBtnFlag = el('span', { className: 'aap-lang-flag' }, [langFlag(currentLang)]);
+    const langBtnCode = el('span', { className: 'aap-lang-code' }, [langShortLabel(currentLang)]);
+    const langBtnCaret = el('span', { className: 'aap-lang-caret' }, ['\u25BE']);
+    const langBtn = el(
+      'button',
+      {
+        type: 'button',
+        className: 'aap-lang-btn',
+        'aria-label': uiText('langMenuLabel', 'Select language'),
+        'aria-haspopup': 'menu',
+        'aria-expanded': 'false',
+      },
+      [langBtnFlag, langBtnCode, langBtnCaret],
+    ) as HTMLButtonElement;
+
+    function closeLangMenu() {
+      langMenu.classList.remove('open');
+      langBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    function openLangMenu() {
+      langMenu.classList.add('open');
+      langBtn.setAttribute('aria-expanded', 'true');
+    }
+
+    function renderLangMenuOptions() {
+      langMenu.replaceChildren();
+      for (const code of ['en', 'fr'] as ChatLang[]) {
+        const opt = el(
+          'button',
+          {
+            type: 'button',
+            className: `aap-lang-option${code === currentLang ? ' active' : ''}`,
+            role: 'menuitem',
+          },
+          [el('span', { className: 'aap-lang-flag' }, [langFlag(code)]), langFullLabel(code)],
+        ) as HTMLButtonElement;
+        opt.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeLangMenu();
+          if (code !== currentLang) void switchLanguage(code);
+        });
+        langMenu.appendChild(opt);
+      }
+    }
+
+    renderLangMenuOptions();
+    langBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (langMenu.classList.contains('open')) closeLangMenu();
+      else openLangMenu();
+    });
+
+    const langWrap = el('div', { className: 'aap-lang-wrap' }, [langBtn, langMenu]);
 
     const sendIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     sendIcon.setAttribute('viewBox', '0 0 24 24');
@@ -480,13 +617,13 @@ type TurnResponse = {
     const sendBtn = el('button', {
       type: 'button',
       className: 'aap-send',
-      'aria-label': 'Send message',
-      title: 'Send',
+      'aria-label': sendLabel,
+      title: sendLabel,
     }) as HTMLButtonElement;
     sendBtn.appendChild(sendIcon);
     sendBtn.style.setProperty('background', 'rgb(3,74,118)', 'important');
     sendBtn.style.setProperty('color', '#ffffff', 'important');
-    const form = el('div', { className: 'aap-form' }, [input, sendBtn]);
+    const form = el('div', { className: 'aap-form' }, [langWrap, inputWrap, sendBtn]);
     panel.appendChild(form);
 
     const botIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -506,7 +643,8 @@ type TurnResponse = {
       '<circle cx="12.4" cy="22" r="1.15" fill="currentColor" stroke="none"/>',
     ].join('');
 
-    const launcherLabel = cfg.theme.launcherLabel || 'Chat with ACOCAM';
+    const launcherLabel =
+      cfg.ui?.['ui.launcherLabel']?.trim() || cfg.theme.launcherLabel || 'Chat with ACOCAM';
     const launcher = el('button', {
       className: 'aap-launcher',
       type: 'button',
@@ -515,20 +653,61 @@ type TurnResponse = {
     }) as HTMLButtonElement;
     launcher.appendChild(botIcon);
 
-    const greetingIntro =
-      cfg.theme.greetingMessage ||
-      '\u{1F44B} Hello and welcome to ACOCAM Trading Inc., your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation.';
     const teaserDismiss = el('button', {
       className: 'aap-teaser-dismiss',
       type: 'button',
-      'aria-label': 'Dismiss welcome message',
-      title: 'Dismiss',
+      'aria-label': dismissLabel,
+      title: dismissLabel,
     }, ['\u00d7']) as HTMLButtonElement;
+    const teaserIntroEl = el('p', {}, [teaserIntroText]);
+    const teaserAssistEl = el('p', {}, [teaserAssistText]);
     const teaser = el('div', { className: 'aap-teaser', role: 'button', tabindex: '0' }, [
       teaserDismiss,
-      el('p', {}, [greetingIntro]),
-      el('p', {}, ['How may I assist you today?']),
+      teaserIntroEl,
+      teaserAssistEl,
     ]);
+
+    async function switchLanguage(lang: ChatLang) {
+      if (lang === currentLang) return;
+      currentLang = lang;
+      try {
+        localStorage.setItem(LANG_STORAGE_KEY, lang);
+      } catch {
+        /* ignore */
+      }
+      const newCfg = await fetchPublicConfig(lang);
+      config = newCfg;
+      bookShipmentLabel = uiText('actionQuoteAuth', 'Book shipment');
+      langBtnFlag.textContent = langFlag(currentLang);
+      langBtnCode.textContent = langShortLabel(currentLang);
+      langBtn.setAttribute('aria-label', uiText('langMenuLabel', 'Select language'));
+      input.placeholder = uiText('inputPlaceholder', 'Type a message…');
+      closeBtn.setAttribute('aria-label', uiText('closeLabel', 'Close chat'));
+      sendBtn.setAttribute('aria-label', uiText('sendLabel', 'Send message'));
+      sendBtn.title = uiText('sendLabel', 'Send message');
+      teaserIntroEl.textContent =
+        newCfg.theme.greetingMessage ||
+        uiText('teaserIntro', newCfg.welcome.split('\n\n')[0] || newCfg.welcome);
+      teaserAssistEl.textContent = uiText('teaserAssist', 'How may I assist you today?');
+      teaserDismiss.setAttribute('aria-label', uiText('dismissLabel', 'Dismiss welcome message'));
+      teaserDismiss.title = uiText('dismissLabel', 'Dismiss welcome message');
+      renderLangMenuOptions();
+      renderActions(
+        actionsBar,
+        adaptActionsForAuth(newCfg.actions, bookShipmentLabel),
+        log,
+        setActions,
+        bookShipmentLabel,
+      );
+      sessionId = null;
+      log.replaceChildren();
+      if (open) {
+        await typeAssistantMessage(log, newCfg.welcome);
+        await ensureSession({ recreate: true });
+      }
+    }
+
+    document.addEventListener('click', () => closeLangMenu());
 
     const hideTeaser = () => teaser.classList.remove('show');
     const setOpen = (next: boolean) => {
@@ -539,7 +718,7 @@ type TurnResponse = {
     const openFromTeaser = () => {
       setOpen(true);
       if (log.childNodes.length === 0) {
-        void typeAssistantMessage(log, cfg.welcome);
+        void typeAssistantMessage(log, config!.welcome);
         void ensureSession();
       }
       input.focus();
@@ -561,7 +740,7 @@ type TurnResponse = {
       hideTeaser();
       setOpen(!open);
       if (open && log.childNodes.length === 0) {
-        void typeAssistantMessage(log, cfg.welcome);
+        void typeAssistantMessage(log, config!.welcome);
         void ensureSession();
       }
     });
@@ -574,7 +753,7 @@ type TurnResponse = {
       sendBtn.setAttribute('disabled', 'true');
       void sendMessage(text, undefined, log, setActions)
         .catch(async (err: Error) => {
-          await typeAssistantMessage(log, err.message || 'Something went wrong.');
+          await typeAssistantMessage(log, err.message || uiText('errorGeneric', 'Something went wrong.'));
         })
         .finally(() => {
           input.disabled = false;
@@ -597,7 +776,7 @@ type TurnResponse = {
 
   void (async () => {
     try {
-      config = await api<PublicConfig>(`/tenants/${tenant}/agents/${agent}/config/public`);
+      config = await fetchPublicConfig(currentLang);
       mount(config);
     } catch (err) {
       console.error('[agent-embed]', err);

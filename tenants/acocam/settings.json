@@ -14,7 +14,11 @@
       "id": "customer-support",
       "name": "ACOCAM Assistant",
       "welcome": "Hello and welcome to ACOCAM Trading Inc., your partner for international logistics, ocean freight, air freight, vehicle shipping, parcels, personal effects, import-export and logistics documentation.\n\nHow may I assist you today?",
+      "welcomeByLanguage": {
+        "fr": "Bonjour et bienvenue chez ACOCAM Trading Inc., votre partenaire en logistique internationale, fret maritime, fret aérien, expédition de véhicules, colis, effets personnels, import-export et documentation logistique.\n\nComment puis-je vous aider aujourd'hui ?"
+      },
       "defaultLanguage": "en",
+      "supportedLanguages": ["en", "fr"],
       "confidenceThreshold": 0.35,
       "escalationFailureThreshold": 2,
       "aiProvider": "null"

@@ -102,6 +102,72 @@ export function acocamHumanFallback(userMessage: string): string {
   }
 }
 
+/** French fallback when retrieval is weak — mirrors English topics. */
+export function acocamHumanFallbackFr(userMessage: string): string {
+  const hints = topicHints(userMessage);
+  const primary = hints[0];
+
+  switch (primary) {
+    case 'pricing':
+      return [
+        'Je peux vous aider avec les tarifs.',
+        'Chez ACOCAM, le coût dépend du type de cargo, dimensions/poids, origine, destination et service choisi (FCL/LCL, fret aérien, véhicule ou colis).',
+        'Je n’invente jamais de prix final ici — nos spécialistes confirment les tarifs officiels après examen.',
+        '',
+        'Partagez origine, destination et détails de la marchandise, ou utilisez **Obtenir un devis** sur https://acocamtrading.ca/get-quote/.',
+      ].join('\n');
+
+    case 'tracking':
+      return [
+        'Je peux vous aider à suivre un envoi.',
+        'Partagez votre numéro de dossier / suivi / AWB / connaissement (ex. ACO-1234) et je le consulterai dans le système ACOCAM.',
+        'Vous pouvez aussi utiliser **Suivi** sur https://acocamtrading.ca/.',
+      ].join('\n');
+
+    case 'documents':
+      return [
+        'Pour la documentation, ACOCAM utilise généralement factures commerciales, listes de colisage et certificats requis selon la route et le cargo.',
+        'Les documents exacts dépendent de l’origine, destination, marchandise et du dédouanement.',
+        '',
+        'Indiquez le type de cargo et le corridor (ex. Canada → Cameroun), ou demandez un agent pour les cas complexes.',
+      ].join('\n');
+
+    case 'services':
+      return [
+        'ACOCAM Trading Inc. offre la logistique internationale : fret maritime (FCL et LCL), fret aérien, véhicules, colis et effets personnels, entreposage et documentation.',
+        '',
+        'Dites-moi ce que vous devez expédier (type, origine, destination) et je vous guiderai — devis, suivi ou agent humain.',
+      ].join('\n');
+
+    case 'contact':
+      return [
+        'Vous pouvez joindre ACOCAM via https://acocamtrading.ca/ (connexion / devis), ou me demander les coordonnées publiées.',
+        'Pour les urgences ou questions de compte, je peux aussi vous connecter à un agent.',
+      ].join('\n');
+
+    case 'booking':
+      return [
+        'Je peux vous aider à démarrer une réservation ou demande de devis.',
+        'Je recueille les détails et vous connecte avec l’équipe ACOCAM — la réservation devient officielle après disponibilité, acceptation du devis, documents et paiement.',
+        '',
+        'Utilisez **Obtenir un devis**, ou indiquez origine, destination et type de cargo.',
+      ].join('\n');
+
+    default:
+      return [
+        'Merci de nous avoir contactés — je suis votre assistant ACOCAM.',
+        'Nous offrons la logistique internationale : fret maritime (FCL/LCL), fret aérien, véhicules, colis, effets personnels, import-export et documentation.',
+        '',
+        'Pouvez-vous préciser (devis, numéro de suivi, type de cargo, origine/destination) ?',
+        'Je peux aussi vous connecter à un agent — dites **parler à un agent**.',
+      ].join('\n');
+  }
+}
+
+export function acocamHumanFallbackLocalized(userMessage: string, language = 'en'): string {
+  return language === 'fr' ? acocamHumanFallbackFr(userMessage) : acocamHumanFallback(userMessage);
+}
+
 /**
  * Light human touch on retrieved FAQ answers without changing facts.
  * Avoids robotic "knowledge dump" feel for paraphrased questions.
@@ -109,23 +175,45 @@ export function acocamHumanFallback(userMessage: string): string {
 export function humanizeRetrievedAnswer(
   answer: string,
   userMessage: string,
-  opts?: { customerName?: string; priorIntent?: string | null },
+  opts?: { customerName?: string; priorIntent?: string | null; language?: string },
 ): string {
   const text = answer.trim();
-  if (!text) return acocamHumanFallback(userMessage);
+  const lang = opts?.language === 'fr' ? 'fr' : 'en';
+  if (!text) return acocamHumanFallbackLocalized(userMessage, lang);
 
   const m = userMessage.trim().toLowerCase();
   const name = opts?.customerName?.trim();
   const namePrefix = name ? `${name}, ` : '';
 
   // Already conversational greetings / thanks — leave as authored
-  if (/^(hi|hello|hey|thanks|thank you|bye|goodbye|good\s*(morning|afternoon|evening))\b/.test(m)) {
+  const mNorm = m.normalize('NFD').replace(/\p{M}/gu, '');
+  if (/^(hi|hello|hey|thanks|thank you|bye|goodbye|good\s*(morning|afternoon|evening)|bonjour|salut|comment ca va|comment allez|merci|au revoir)\b/.test(mNorm)) {
     return text;
   }
 
   // Don't stack openers if the answer already sounds spoken
-  if (/^(sure|absolutely|happy to|of course|thanks|you('re| are) welcome|hello|hi\b)/i.test(text)) {
+  const spokenStart =
+    lang === 'fr'
+      ? /^(bien sûr|absolument|avec plaisir|bien entendu|merci|je vous en prie|bonjour|salut)\b/i
+      : /^(sure|absolutely|happy to|of course|thanks|you('re| are) welcome|hello|hi\b)/i;
+  if (spokenStart.test(text)) {
     return name && !text.toLowerCase().includes(name.toLowerCase()) ? `${name}, ${text}` : text;
+  }
+
+  if (lang === 'fr') {
+    if (/^(qu['']est|explique|dis-moi|peux-tu|comment fonctionne|comment marche)\b/.test(mNorm)) {
+      return `Bien sûr${name ? `, ${name}` : ''} — voici comment cela fonctionne chez ACOCAM :\n\n${text}`;
+    }
+    if (/^(est-ce|acocam|pouvez|peut-on|est-il possible)\b/.test(mNorm)) {
+      return `Oui${name ? `, ${name}` : ''} — côté ACOCAM :\n\n${text}`;
+    }
+    if (/\b(combien|co[uû]t|prix|tarif)\b/.test(mNorm)) {
+      return `${namePrefix}${text}\n\nSi vous le souhaitez, indiquez l'origine, la destination et les détails de la marchandise — je pourrai vous guider pour une demande de devis officielle.`;
+    }
+    if (opts?.priorIntent?.startsWith('quote') && /\b(document|suivi|lcl|fcl|a[eé]rien|v[eé]hicule)\b/.test(mNorm)) {
+      return `${namePrefix}${text}\n\nQuand vous serez prêt, nous pourrons aussi poursuivre votre demande de devis.`;
+    }
+    return name ? `${name} — ${text}` : text;
   }
 
   if (/^(what|explain|tell me|can you explain|how does)\b/.test(m)) {
